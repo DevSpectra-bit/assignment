@@ -36,7 +36,7 @@ def index():
     annotated_rows = []
     for r in rows:
         due_date = datetime.strptime(r[3], "%Y-%m-%d").date()  # <-- fixed index
-        is_due_soon = (due_date - today).days < 1
+        is_due_soon = (due_date - today).days =< 1
         is_past_due = due_date < today
         if is_due_soon:
             due_soon.append(r)
