@@ -70,12 +70,7 @@ def add():
 
 @app.route("/delete/<int:id>")
 def delete(id):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM assignments WHERE id = ?", (id,))
-    conn.commit()
-    conn.close()
-    return redirect(url_for("index"))
+    return redirect("https://huhs.schoology.com/course/7898868497/materials")
 
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 def edit(id):
