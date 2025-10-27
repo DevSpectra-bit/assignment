@@ -1,1 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Assignment Tracker</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; }
+    input, textarea { width: 100%; margin-bottom: 10px; padding: 8px; }
+    button { padding: 8px 12px; }
+    .due-soon { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>📚 Assignment Tracker</h1>
 
+  {% if due_soon %}
+    <p class="due-soon">⚠️ You have {{ due_soon|length }} assignment(s) due within 24 hours!</p>
+  {% endif %}
+
+  <form action="/add" method="post">
+    <input type="text" name="title" placeholder="Assignment Title" required>
+    <input type="date" name="due_date" required>
+    <textarea name="notes" placeholder="Notes (optional)"></textarea>
+    <button type="submit">Add Assignment</button>
+  </form>
+
+  <h2>All Assignments</h2>
+  <ul>
+    {% for a in assignments %}
+      <li>
+        <strong>{{ a[1] }}</strong> — due {{ a[2] }}
+        {% if (a[2]|tojson|safe) < (now|tojson|safe) %} (past due) {% endif %}
+        <a href="/delete/{{ a[0] }}">❌</a>
+      </li>
+    {% endfor %}
+  </ul>
+</body>
+</html>
