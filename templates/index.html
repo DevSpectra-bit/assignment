@@ -138,7 +138,7 @@
       {% for a in assignments %}
         <li>
           <div>
-            <strong>{{ a.title }}</strong><br>
+            <strong>{{ a.title }}</strong> - {{a.class}}<br>
             <span class="due-date">Due {{ a.due_date }}</span>
             {% if a.is_past_due %}
               <span class="past-due"> (Past Due)</span>
