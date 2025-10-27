@@ -74,6 +74,33 @@ def delete(id):
     conn.close()
     return redirect(url_for("index"))
 
+@app.route("/edit/<int:id>", methods=["GET", "POST"])
+def edit(id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if request.method == "POST":
+        # update the assignment
+        title = request.form["title"]
+        cl = request.form["class"]
+        due_date = request.form["due_date"]
+        notes = request.form.get("notes", "")
+        c.execute("""
+            UPDATE assignments
+            SET title = ?, cl = ?, due_date = ?, notes = ?
+            WHERE id = ?
+        """, (title, cl, due_date, notes, id))
+        conn.commit()
+        conn.close()
+        return redirect(url_for("index"))
+    else:
+        # show the edit form
+        c.execute("SELECT * FROM assignments WHERE id = ?", (id,))
+        assignment = c.fetchone()
+        conn.close()
+        return render_template("edit.html", assignment=assignment)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
