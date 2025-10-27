@@ -68,9 +68,34 @@ def add():
     conn.close()
     return redirect(url_for("index"))
 
-@app.route("/delete/<int:id>")
-def delete(id):
-    return redirect("https://huhs.schoology.com/course/7898868497/materials")
+@app.route("/redirect/<int:id>")
+def redirect_by_class(id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT cl FROM assignments WHERE id = ?", (id,))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        # fallback if no assignment found
+        return redirect(url_for("index"))
+
+    class_name = row[0].strip().lower()
+
+    # map class names to URLs
+    class_links = {
+        "math": "https://huhs.schoology.com/course/7898849902/materials",
+        "english": "https://huhs.schoology.com/course/7898845132/materials",
+        "ot": "https://huhs.schoology.com/course/7898892551/materials",
+        "robotics": "https://huhs.schoology.com/course/8075753955/materials",
+        "spanish": "https://huhs.schoology.com/course/7898849808/materials",
+        "history": "https://huhs.schoology.com/course/7898868497/materials"
+    }
+
+    # choose the correct URL or fallback
+    redirect_url = class_links.get(class_name, url_for("index"))
+    return redirect(redirect_url)
+
 
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 def edit(id):
