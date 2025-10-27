@@ -130,7 +130,6 @@
       <input type="text" name="class" placeholder="Class" required>
       <input type="date" name="due_date" required>
       <textarea name="notes" placeholder="Notes (optional)"></textarea>
-      <input type="text" name="link" placeholder="Schoology Link" required>
       <button type="submit">➕ Add Assignment</button>
     </form>
 
@@ -139,7 +138,7 @@
       {% for a in assignments %}
         <li>
           <div>
-            <strong>{{ a.title }}</strong> - {{a.class}}<br> {{a.link}}
+            <strong>{{ a.title }}</strong> - {{a.class}}<br>
             <span class="due-date">Due {{ a.due_date }}</span>
             {% if a.is_past_due %}
               <span class="past-due"> (Past Due)</span>
