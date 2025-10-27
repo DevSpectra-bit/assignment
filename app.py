@@ -1,12 +1,11 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for
-from datetime import datetime, timedelta
+from datetime import datetime
 import sqlite3
 import os
 
 app = Flask(__name__)
 
-# Create database if it doesn’t exist
 DB_NAME = "assignments.db"
 
 def init_db():
@@ -15,6 +14,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS assignments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
+                    cl TEXT NOT NULL,
                     due_date TEXT NOT NULL,
                     notes TEXT
                 )''')
@@ -22,8 +22,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-# --- ROUTES ---
 
 @app.route("/")
 def index():
@@ -37,7 +35,7 @@ def index():
     due_soon = []
     annotated_rows = []
     for r in rows:
-        due_date = datetime.strptime(r[2], "%Y-%m-%d").date()
+        due_date = datetime.strptime(r[3], "%Y-%m-%d").date()  # <-- fixed index
         is_due_soon = (due_date - today).days < 1
         is_past_due = due_date < today
         if is_due_soon:
@@ -45,13 +43,13 @@ def index():
         annotated_rows.append({
             "id": r[0],
             "title": r[1],
-            "due_date": r[2],
-            "notes": r[3],
+            "class": r[2],
+            "due_date": r[3],
+            "notes": r[4],
             "is_past_due": is_past_due
         })
 
     return render_template("index.html", assignments=annotated_rows, due_soon=due_soon)
-
 
 @app.route("/add", methods=["POST"])
 def add():
@@ -67,7 +65,6 @@ def add():
     conn.close()
     return redirect(url_for("index"))
 
-
 @app.route("/delete/<int:id>")
 def delete(id):
     conn = sqlite3.connect(DB_NAME)
@@ -76,7 +73,6 @@ def delete(id):
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
