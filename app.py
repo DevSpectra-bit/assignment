@@ -17,7 +17,6 @@ def init_db():
                     cl TEXT NOT NULL,
                     due_date TEXT NOT NULL,
                     notes TEXT,
-                    link TEXT NOT NULL
                 )''')
     conn.commit()
     conn.close()
@@ -47,7 +46,6 @@ def index():
             "class": r[2],
             "due_date": r[3],
             "notes": r[4],
-            "link": r[5],
             "is_past_due": is_past_due
         })
 
@@ -59,11 +57,10 @@ def add():
     cl = request.form["class"]
     due_date = request.form["due_date"]
     notes = request.form.get("notes", "")
-    link = request.form["link"]
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO assignments (title, cl, due_date, notes, link) VALUES (?, ?, ?, ?, ?)",
-              (title, cl, due_date, notes, link))
+    c.execute("INSERT INTO assignments (title, cl, due_date, notes) VALUES (?, ?, ?, ?)",
+              (title, cl, due_date, notes))
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
@@ -108,12 +105,11 @@ def edit(id):
         cl = request.form["class"]
         due_date = request.form["due_date"]
         notes = request.form.get("notes", "")
-        link = request.form["link"]
         c.execute("""
             UPDATE assignments
-            SET title = ?, cl = ?, due_date = ?, notes = ?, link = ?
+            SET title = ?, cl = ?, due_date = ?, notes = ?
             WHERE id = ?
-        """, (title, cl, due_date, notes, link, id))
+        """, (title, cl, due_date, notes, id))
         conn.commit()
         conn.close()
         return redirect(url_for("index"))
