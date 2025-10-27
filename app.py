@@ -62,7 +62,7 @@ def add():
     link = request.form["link"]
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO assignments (title, cl, due_date, notes, link) VALUES (?, ?, ?, ?)",
+    c.execute("INSERT INTO assignments (title, cl, due_date, notes, link) VALUES (?, ?, ?, ?, ?)",
               (title, cl, due_date, notes, link))
     conn.commit()
     conn.close()
