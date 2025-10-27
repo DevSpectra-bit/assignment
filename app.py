@@ -33,10 +33,24 @@ def index():
     rows = c.fetchall()
     conn.close()
 
-    # Check for due soon (within 1 day)
-    today = datetime.now()
-    due_soon = [r for r in rows if datetime.strptime(r[2], "%Y-%m-%d") - today < timedelta(days=1)]
-    return render_template("index.html", assignments=rows, due_soon=due_soon)
+    today = datetime.now().date()
+    due_soon = []
+    annotated_rows = []
+    for r in rows:
+        due_date = datetime.strptime(r[2], "%Y-%m-%d").date()
+        is_due_soon = (due_date - today).days < 1
+        is_past_due = due_date < today
+        if is_due_soon:
+            due_soon.append(r)
+        annotated_rows.append({
+            "id": r[0],
+            "title": r[1],
+            "due_date": r[2],
+            "notes": r[3],
+            "is_past_due": is_past_due
+        })
+
+    return render_template("index.html", assignments=annotated_rows, due_soon=due_soon)
 
 
 @app.route("/add", methods=["POST"])
