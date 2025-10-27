@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Edit Assignment</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8fafc;
+      margin: 0;
+      padding: 30px;
+    }
+    form {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+      max-width: 500px;
+      margin: auto;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.1);
+    }
+    input, textarea {
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background: #4F46E5;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1 style="text-align:center;">✏️ Edit Assignment</h1>
+  <form method="post">
+    <label>Title:</label>
+    <input type="text" name="title" value="{{ assignment[1] }}" required>
+
+    <label>Class:</label>
+    <input type="text" name="class" value="{{ assignment[2] }}" required>
+
+    <label>Due Date:</label>
+    <input type="date" name="due_date" value="{{ assignment[3] }}" required>
+
+    <label>Notes:</label>
+    <textarea name="notes">{{ assignment[4] }}</textarea>
+
+    <button type="submit">💾 Save Changes</button>
+    <button type="button" onclick="window.location.href='/'">Cancel</button>
+  </form>
+</body>
+</html>
