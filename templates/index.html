@@ -143,9 +143,9 @@
             {% if a.is_past_due %}
               <span class="past-due"> (Past Due)</span>
             {% endif %}
-            <button type="edit"> Edit Assignment>
           </div>
-          <a href="/delete/{{ a.id }}">✖</a>
+          <a href="/edit/{{ a.id }}">✏️ Edit</a>
+          <a href="/delete/{{ a.id }}">❌ Delete</a>
         </li>
       {% endfor %}
     </ul>
