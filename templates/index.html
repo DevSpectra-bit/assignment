@@ -27,9 +27,9 @@
   <ul>
     {% for a in assignments %}
       <li>
-        <strong>{{ a[1] }}</strong> — due {{ a[2] }}
-        {% if (a[2]|tojson|safe) < (now|tojson|safe) %} (past due) {% endif %}
-        <a href="/delete/{{ a[0] }}">❌</a>
+        <strong>{{ a.title }}</strong> — due {{ a.due_date }}
+        {% if a.is_past_due %}<span style="color:red;">(past due)</span>{% endif %}
+        <a href="/delete/{{ a.id }}">❌</a>
       </li>
     {% endfor %}
   </ul>
