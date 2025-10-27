@@ -16,7 +16,7 @@ def init_db():
                     title TEXT NOT NULL,
                     cl TEXT NOT NULL,
                     due_date TEXT NOT NULL,
-                    notes TEXT,
+                    notes TEXT
                 )''')
     conn.commit()
     conn.close()
