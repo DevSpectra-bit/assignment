@@ -56,12 +56,13 @@ def index():
 @app.route("/add", methods=["POST"])
 def add():
     title = request.form["title"]
+    class = request.form["class"]
     due_date = request.form["due_date"]
     notes = request.form.get("notes", "")
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO assignments (title, due_date, notes) VALUES (?, ?, ?)",
-              (title, due_date, notes))
+    c.execute("INSERT INTO assignments (title, class, due_date, notes) VALUES (?, ?, ?, ?)",
+              (title, class, due_date, notes))
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
