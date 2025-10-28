@@ -118,7 +118,7 @@ def login():
         user = c.fetchone()
         conn.close()
 
-        if user and check_password_hash(user["password"], password):
+        if user and check_password_hash(dict(user)["password"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             return redirect(url_for("index"))
