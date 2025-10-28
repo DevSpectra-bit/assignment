@@ -41,18 +41,17 @@ def index():
     annotated_rows = []
 
     for r in rows:
-        # Parse the due date safely
         try:
             due_date = datetime.strptime(r["due_date"], "%Y-%m-%d").date()
         except ValueError:
-            # Skip bad dates
             continue
 
         days_left = (due_date - today).days
-        is_due_soon = 0 <= days_left <= 1  # ✅ today or tomorrow
+        is_due_today = days_left == 0
+        is_due_tomorrow = days_left == 1
         is_past_due = due_date < today
 
-        if is_due_soon:
+        if is_due_today or is_due_tomorrow:
             due_soon.append(r)
 
         annotated_rows.append({
@@ -62,7 +61,8 @@ def index():
             "due_date": r["due_date"],
             "notes": r["notes"],
             "is_past_due": is_past_due,
-            "due_soon": is_due_soon  # ✅ Added this key
+            "is_due_today": is_due_today,
+            "is_due_tomorrow": is_due_tomorrow
         })
 
     return render_template("index.html", assignments=annotated_rows, due_soon=due_soon)
