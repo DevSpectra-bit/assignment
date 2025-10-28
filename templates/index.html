@@ -24,12 +24,21 @@
   <!-- Header -->
   <header class="bg-white shadow-md py-4 px-6 flex justify-between items-center">
     <h1 class="text-3xl font-bold text-indigo-600">Assignment Tracker</h1>
+
     {% if session.get("username") %}
-    <a href="{{ url_for('logout') }}" class="text-gray-600 hover:text-indigo-600 font-medium">
-      Logout ({{ session['username'] }})
-    </a>
+    <div class="flex items-center gap-4">
+      <a href="{{ url_for('manage_classes') }}" 
+        class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition">
+        Manage Classes
+      </a>
+      <a href="{{ url_for('logout') }}" 
+        class="text-gray-600 hover:text-indigo-600 font-medium">
+        Logout ({{ session['username'] }})
+      </a>
+    </div>
     {% endif %}
   </header>
+
 
   <main class="flex-1 p-6">
     <!-- Add Assignment Form -->

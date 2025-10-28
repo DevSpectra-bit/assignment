@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Classes</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background: #f7f8fa;
+            margin: 0;
+            padding: 0;
+            color: #333;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 60px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        }
+
+        h1 {
+            text-align: center;
+            color: #222;
+        }
+
+        form {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            font-size: 15px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        table {
+            width: 100%;
+            margin-top: 25px;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 10px 8px;
+            text-align: left;
+        }
+
+        th {
+            background: #f1f3f5;
+        }
+
+        tr:nth-child(even) {
+            background: #fafafa;
+        }
+
+        a.delete {
+            color: #e63946;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        a.delete:hover {
+            text-decoration: underline;
+        }
+
+        .nav {
+            text-align: center;
+            margin-top: 25px;
+        }
+
+        .nav a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .nav a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Your Classes</h1>
+
+        <form action="{{ url_for('manage_classes') }}" method="POST">
+            <input type="text" name="class_name" placeholder="Class name (e.g. math)" required>
+            <input type="text" name="link" placeholder="Schoology link (https://...)" required>
+            <button type="submit">Add</button>
+        </form>
+
+        {% if classes %}
+        <table>
+            <tr>
+                <th>Class Name</th>
+                <th>Link</th>
+                <th>Action</th>
+            </tr>
+            {% for c in classes %}
+            <tr>
+                <td>{{ c.class_name }}</td>
+                <td><a href="{{ c.link }}" target="_blank">{{ c.link }}</a></td>
+                <td><a href="{{ url_for('delete_class', id=c.id) }}" class="delete">Delete</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+        {% else %}
+        <p style="text-align:center; margin-top:20px;">You haven’t added any classes yet.</p>
+        {% endif %}
+
+        <div class="nav">
+            <a href="{{ url_for('index') }}">← Back to assignments</a>
+        </div>
+    </div>
+</body>
+</html>
