@@ -7,43 +7,22 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3313/3313899.png" />
   <style>
-    /* 🔥 Flashing animation for due soon assignments */
-    @keyframes flash {
-      0%, 100% {
-        background-color: #FEF9C3;
-        color: #854D0E;
-      }
-      50% {
-        background-color: #FACC15;
-        color: #78350F;
-      }
+    /* 🔥 Flashing animation for due soon and past due cards */
+    @keyframes flash-yellow {
+      0%, 100% { background-color: #FEF9C3; }
+      50% { background-color: #FACC15; }
+    }
+    @keyframes flash-red {
+      0%, 100% { background-color: #FEE2E2; }
+      50% { background-color: #FCA5A5; }
     }
 
-    .due-soon-badge {
-      display: inline-block;
-      padding: 2px 10px;
-      border-radius: 9999px;
-      font-weight: 600;
-      font-size: 0.8rem;
-      animation: flash 1s infinite;
+    .flash-yellow {
+      animation: flash-yellow 1.2s infinite;
     }
 
-    .past-due {
-      background: #FEE2E2;
-      color: #B91C1C;
-      font-weight: 600;
-      padding: 2px 10px;
-      border-radius: 9999px;
-      font-size: 0.8rem;
-    }
-
-    .on-track {
-      background: #DCFCE7;
-      color: #166534;
-      font-weight: 600;
-      padding: 2px 10px;
-      border-radius: 9999px;
-      font-size: 0.8rem;
+    .flash-red {
+      animation: flash-red 1.2s infinite;
     }
   </style>
 </head>
@@ -82,18 +61,23 @@
     {% if assignments %}
       <ul class="space-y-3">
         {% for a in assignments %}
-          <li class="border border-gray-200 rounded-xl p-4 bg-gray-50 hover:bg-gray-100 transition shadow-sm">
+          <li
+            class="border border-gray-200 rounded-xl p-4 shadow-sm transition
+            {% if a.is_past_due %} flash-red {% elif a.is_due_today or a.is_due_tomorrow %} flash-yellow {% else %} bg-green-50 {% endif %}"
+          >
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p class="font-semibold text-lg">{{ a.title }}</p>
                 <p class="text-sm text-gray-600">{{ a.class }} — Due {{ a.due_date }}</p>
                 <div class="mt-1">
                   {% if a.is_past_due %}
-                    <span class="past-due">❌ Past Due</span>
-                  {% elif a.due_soon %}
-                    <span class="due-soon-badge">⏰ Due Soon!</span>
+                    <span class="text-red-700 font-semibold">❌ Past Due</span>
+                  {% elif a.is_due_today %}
+                    <span class="text-yellow-700 font-semibold">🔥 Due Today!</span>
+                  {% elif a.is_due_tomorrow %}
+                    <span class="text-yellow-700 font-semibold">⏰ Due Tomorrow</span>
                   {% else %}
-                    <span class="on-track">✅ On Track</span>
+                    <span class="text-green-700 font-semibold">✅ On Track</span>
                   {% endif %}
                 </div>
               </div>
