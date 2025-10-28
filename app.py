@@ -297,7 +297,7 @@ def manage_classes():
         links = c.fetchall()
     finally:
         conn.close()
-    return render_template("classes.html", links=links)
+    return render_template("classes.html", classes=links)
 
 
 @app.route("/delete_class/<int:id>", methods=["POST", "GET"])
