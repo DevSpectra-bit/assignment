@@ -1,154 +1,71 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>📚 Assignment Tracker</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #f5f7fa;
-      color: #333;
-      margin: 0;
-      padding: 0;
-    }
-
-    header {
-      background: #4F46E5;
-      color: white;
-      padding: 20px;
-      text-align: center;
-      font-size: 1.8rem;
-      font-weight: bold;
-      letter-spacing: 1px;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-    }
-
-    main {
-      max-width: 700px;
-      margin: 30px auto;
-      background: white;
-      padding: 25px 35px;
-      border-radius: 16px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-    }
-
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-bottom: 25px;
-    }
-
-    input, textarea {
-      font-size: 1rem;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 8px;
-      outline: none;
-      transition: border 0.2s;
-    }
-
-    input:focus, textarea:focus {
-      border-color: #4F46E5;
-    }
-
-    button {
-      background: #4F46E5;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 16px;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.3s;
-    }
-
-    button:hover {
-      background: #4338CA;
-    }
-
-    ul {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-    }
-
-    li {
-      background: #f9fafb;
-      border: 1px solid #eee;
-      border-radius: 8px;
-      margin-bottom: 10px;
-      padding: 12px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .due-date {
-      font-size: 0.9rem;
-      color: #555;
-    }
-
-    .past-due {
-      color: #E11D48;
-      font-weight: bold;
-    }
-
-    a {
-      text-decoration: none;
-      color: #E11D48;
-      font-weight: bold;
-      font-size: 1.2rem;
-      transition: color 0.2s;
-    }
-
-    a:hover {
-      color: #9F1239;
-    }
-
-    .due-soon {
-      background: #FEF9C3;
-      border: 1px solid #FACC15;
-      padding: 10px;
-      border-radius: 8px;
-      margin-bottom: 20px;
-      color: #854D0E;
-      font-weight: bold;
-    }
-  </style>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3313/3313899.png" />
 </head>
-<body>
-  <header>📅 Assignment Tracker</header>
+<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col">
 
-  <main>
+  <!-- Header -->
+  <header class="bg-indigo-600 text-white py-5 shadow-md">
+    <h1 class="text-3xl font-bold text-center">📅 Assignment Tracker</h1>
+  </header>
+
+  <!-- Main content -->
+  <main class="flex-grow max-w-3xl mx-auto mt-10 bg-white rounded-2xl shadow-md p-6">
+    
+    <!-- Due soon alert -->
     {% if due_soon %}
-      <div class="due-soon">⚠️ {{ due_soon|length }} assignment(s) due within 24 hours!</div>
+      <div class="mb-6 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg flex items-center">
+        ⚠️ <span class="ml-2 font-medium">{{ due_soon|length }} assignment(s) due within 24 hours!</span>
+      </div>
     {% endif %}
 
-    <form action="/add" method="post">
-      <input type="text" name="title" placeholder="Assignment Title" required>
-      <input type="text" name="class" placeholder="Class" required>
-      <input type="date" name="due_date" required>
-      <textarea name="notes" placeholder="Notes (optional)"></textarea>
-      <button type="submit">➕ Add Assignment</button>
+    <!-- Add form -->
+    <form action="/add" method="post" class="space-y-3 mb-8">
+      <div class="grid md:grid-cols-2 gap-3">
+        <input type="text" name="title" placeholder="Assignment Title" required class="border rounded-lg p-2 focus:ring-2 focus:ring-indigo-400">
+        <input type="text" name="class" placeholder="Class" required class="border rounded-lg p-2 focus:ring-2 focus:ring-indigo-400">
+      </div>
+      <input type="date" name="due_date" required class="border rounded-lg p-2 w-full focus:ring-2 focus:ring-indigo-400">
+      <textarea name="notes" placeholder="Notes (optional)" class="border rounded-lg p-2 w-full focus:ring-2 focus:ring-indigo-400"></textarea>
+      <button type="submit" class="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
+        ➕ Add Assignment
+      </button>
     </form>
 
-    <h2>All Assignments</h2>
-    <ul>
-      {% for a in assignments %}
-        <li>
-          <div>
-            <strong>{{ a.title }}</strong> - {{a.class}}<br>
-            <span class="due-date">Due {{ a.due_date }}</span>
-            {% if a.is_past_due %}
-              <span class="past-due"> (Past Due)</span>
-            {% endif %}
-          </div>
-          <a href="/edit/{{ a.id }}">✏️ Edit</a>
-          <a href="/redirect/{{ a.id }}" target="_blank">🌐 Open Class Page</a>
-        </li>
-      {% endfor %}
-    </ul>
+    <!-- Assignment list -->
+    <h2 class="text-2xl font-semibold mb-4">All Assignments</h2>
+    {% if assignments %}
+      <ul class="space-y-3">
+        {% for a in assignments %}
+          <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between border border-gray-200 rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition">
+            <div>
+              <p class="font-semibold text-lg">{{ a.title }}</p>
+              <p class="text-sm text-gray-600">{{ a.class }} — Due {{ a.due_date }}</p>
+              {% if a.is_past_due %}
+                <p class="text-red-600 font-semibold text-sm mt-1">⚠️ Past Due</p>
+              {% endif %}
+            </div>
+            <div class="flex gap-3 mt-3 sm:mt-0">
+              <a href="/edit/{{ a.id }}" class="text-indigo-600 font-medium hover:underline">✏️ Edit</a>
+              <a href="/redirect/{{ a.id }}" target="_blank" class="text-green-600 font-medium hover:underline">🌐 Open</a>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-gray-500 italic text-center mt-6">No assignments yet. Add one above!</p>
+    {% endif %}
   </main>
+
+  <!-- Footer -->
+  <footer class="bg-gray-200 text-gray-600 text-center py-3 mt-10 text-sm">
+    Made with ❤️ using Flask + Tailwind
+  </footer>
+
 </body>
 </html>
