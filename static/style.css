@@ -110,3 +110,25 @@ footer {
   padding: 1rem;
   color: #6b7280;
 }
+
+/* 🔥 Flashing animation for due soon assignments */
+@keyframes flash {
+  0%, 100% {
+    background-color: #FEF9C3; /* light yellow */
+    color: #854D0E;
+  }
+  50% {
+    background-color: #FACC15; /* stronger yellow */
+    color: #78350F;
+  }
+}
+
+.due-soon-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 0.9rem;
+  animation: flash 1s infinite; /* repeats forever */
+}
+
