@@ -1,36 +1,64 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for
 from datetime import datetime
+import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import os
+import sqlite3
+from dotenv import load_dotenv
+
+# Load .env if available
+load_dotenv()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
-# Connect to PostgreSQL (get URL from Render environment variable)
+# Use DATABASE_URL if available (Render), otherwise fallback to SQLite
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# --- Database Setup ---
+# --- DATABASE CONNECTION HELPER ---
+def get_connection():
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    else:
+        conn = sqlite3.connect("assignments.db")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+
+# --- DATABASE SETUP ---
 def init_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS assignments (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    cl TEXT NOT NULL,
-                    due_date TEXT NOT NULL,
-                    notes TEXT
-                )''')
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS assignments (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                cl TEXT NOT NULL,
+                due_date TEXT NOT NULL,
+                notes TEXT
+            )
+        """)
+    else:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                cl TEXT NOT NULL,
+                due_date TEXT NOT NULL,
+                notes TEXT
+            )
+        """)
     conn.commit()
     conn.close()
+
 
 init_db()
 
 # --- ROUTES ---
-
 @app.route("/")
 def index():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM assignments ORDER BY due_date ASC")
     rows = c.fetchall()
@@ -41,8 +69,10 @@ def index():
     annotated_rows = []
 
     for r in rows:
+        # For SQLite compatibility: convert Row to dict
+        row = dict(r)
         try:
-            due_date = datetime.strptime(r["due_date"], "%Y-%m-%d").date()
+            due_date = datetime.strptime(row["due_date"], "%Y-%m-%d").date()
         except ValueError:
             continue
 
@@ -52,14 +82,14 @@ def index():
         is_past_due = due_date < today
 
         if is_due_today or is_due_tomorrow:
-            due_soon.append(r)
+            due_soon.append(row)
 
         annotated_rows.append({
-            "id": r["id"],
-            "title": r["title"],
-            "class": r["cl"],
-            "due_date": r["due_date"],
-            "notes": r["notes"],
+            "id": row["id"],
+            "title": row["title"],
+            "class": row["cl"],
+            "due_date": row["due_date"],
+            "notes": row["notes"],
             "is_past_due": is_past_due,
             "is_due_today": is_due_today,
             "is_due_tomorrow": is_due_tomorrow
@@ -75,12 +105,20 @@ def add():
     due_date = request.form["due_date"]
     notes = request.form.get("notes", "")
 
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = get_connection()
     c = conn.cursor()
-    c.execute(
-        "INSERT INTO assignments (title, cl, due_date, notes) VALUES (%s, %s, %s, %s)",
-        (title, cl, due_date, notes)
-    )
+
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute(
+            "INSERT INTO assignments (title, cl, due_date, notes) VALUES (%s, %s, %s, %s)",
+            (title, cl, due_date, notes)
+        )
+    else:
+        c.execute(
+            "INSERT INTO assignments (title, cl, due_date, notes) VALUES (?, ?, ?, ?)",
+            (title, cl, due_date, notes)
+        )
+
     conn.commit()
     conn.close()
     return redirect(url_for("index"))
@@ -88,16 +126,22 @@ def add():
 
 @app.route("/redirect/<int:id>")
 def redirect_by_class(id):
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT cl FROM assignments WHERE id = %s", (id,))
+
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute("SELECT cl FROM assignments WHERE id = %s", (id,))
+    else:
+        c.execute("SELECT cl FROM assignments WHERE id = ?", (id,))
+
     row = c.fetchone()
     conn.close()
 
     if not row:
         return redirect(url_for("index"))
 
-    class_name = row["cl"].strip().lower()
+    # Handle both dict (Postgres) and sqlite Row
+    class_name = (row["cl"] if isinstance(row, dict) else row["cl"]).strip().lower()
 
     class_links = {
         "math": "https://huhs.schoology.com/course/7898849902/materials",
@@ -114,7 +158,7 @@ def redirect_by_class(id):
 
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
 def edit(id):
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    conn = get_connection()
     c = conn.cursor()
 
     if request.method == "POST":
@@ -123,16 +167,28 @@ def edit(id):
         due_date = request.form["due_date"]
         notes = request.form.get("notes", "")
 
-        c.execute("""
-            UPDATE assignments
-            SET title = %s, cl = %s, due_date = %s, notes = %s
-            WHERE id = %s
-        """, (title, cl, due_date, notes, id))
+        if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+            c.execute("""
+                UPDATE assignments
+                SET title = %s, cl = %s, due_date = %s, notes = %s
+                WHERE id = %s
+            """, (title, cl, due_date, notes, id))
+        else:
+            c.execute("""
+                UPDATE assignments
+                SET title = ?, cl = ?, due_date = ?, notes = ?
+                WHERE id = ?
+            """, (title, cl, due_date, notes, id))
+
         conn.commit()
         conn.close()
         return redirect(url_for("index"))
     else:
-        c.execute("SELECT * FROM assignments WHERE id = %s", (id,))
+        if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+            c.execute("SELECT * FROM assignments WHERE id = %s", (id,))
+        else:
+            c.execute("SELECT * FROM assignments WHERE id = ?", (id,))
+
         assignment = c.fetchone()
         conn.close()
         return render_template("edit.html", assignment=assignment)
@@ -140,4 +196,4 @@ def edit(id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)
