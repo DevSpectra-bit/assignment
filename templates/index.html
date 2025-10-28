@@ -3,101 +3,87 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>📚 Assignment Tracker</title>
+  <title>Assignment Tracker</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/3313/3313899.png" />
   <style>
-    /* 🔥 Flashing animation for due soon and past due cards */
-    @keyframes flash-yellow {
-      0%, 100% { background-color: #FEF9C3; }
-      50% { background-color: #FACC15; }
-    }
+    /* Flashing effects */
     @keyframes flash-red {
-      0%, 100% { background-color: #FEE2E2; }
-      50% { background-color: #FCA5A5; }
+      0%, 100% { background-color: #fee2e2; }
+      50% { background-color: #fecaca; }
     }
-
-    .flash-yellow {
-      animation: flash-yellow 1.2s infinite;
+    @keyframes flash-yellow {
+      0%, 100% { background-color: #fef9c3; }
+      50% { background-color: #fde68a; }
     }
-
-    .flash-red {
-      animation: flash-red 1.2s infinite;
-    }
+    .flash-red { animation: flash-red 1s infinite; }
+    .flash-yellow { animation: flash-yellow 1s infinite; }
   </style>
 </head>
-<body class="bg-gray-100 text-gray-800 min-h-screen flex flex-col">
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col">
 
   <!-- Header -->
-  <header class="bg-indigo-600 text-white py-5 shadow-md">
-    <h1 class="text-3xl font-bold text-center">📅 Assignment Tracker</h1>
+  <header class="bg-white shadow-md py-4 px-6 flex justify-between items-center">
+    <h1 class="text-3xl font-bold text-indigo-600">Assignment Tracker</h1>
+    {% if session.get("username") %}
+    <a href="{{ url_for('logout') }}" class="text-gray-600 hover:text-indigo-600 font-medium">
+      Logout ({{ session['username'] }})
+    </a>
+    {% endif %}
   </header>
 
-  <!-- Main content -->
-  <main class="flex-grow max-w-3xl mx-auto mt-10 bg-white rounded-2xl shadow-md p-6">
-    
-    <!-- Due soon alert -->
-    {% if due_soon %}
-      <div class="mb-6 bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded-lg flex items-center">
-        ⚠️ <span class="ml-2 font-medium">{{ due_soon|length }} assignment(s) due within 24 hours!</span>
-      </div>
-    {% endif %}
+  <main class="flex-1 p-6">
+    <!-- Add Assignment Form -->
+    <section class="bg-white rounded-xl shadow-md p-6 mb-8 max-w-3xl mx-auto">
+      <h2 class="text-xl font-semibold text-indigo-600 mb-4">Add Assignment</h2>
+      <form action="{{ url_for('add') }}" method="POST" class="grid md:grid-cols-2 gap-4">
+        <input type="text" name="title" placeholder="Assignment title" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <input type="text" name="class" placeholder="Class name (e.g., Math)" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <input type="date" name="due_date" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <input type="text" name="notes" placeholder="Notes (optional)" class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <button type="submit" class="col-span-2 bg-indigo-600 text-white font-semibold py-2 rounded-lg hover:bg-indigo-700 transition">
+          Add Assignment
+        </button>
+      </form>
+    </section>
 
-    <!-- Add form -->
-    <form action="/add" method="post" class="space-y-3 mb-8">
-      <div class="grid md:grid-cols-2 gap-3">
-        <input type="text" name="title" placeholder="Assignment Title" required class="border rounded-lg p-2 focus:ring-2 focus:ring-indigo-400">
-        <input type="text" name="class" placeholder="Class" required class="border rounded-lg p-2 focus:ring-2 focus:ring-indigo-400">
-      </div>
-      <input type="date" name="due_date" required class="border rounded-lg p-2 w-full focus:ring-2 focus:ring-indigo-400">
-      <textarea name="notes" placeholder="Notes (optional)" class="border rounded-lg p-2 w-full focus:ring-2 focus:ring-indigo-400"></textarea>
-      <button type="submit" class="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
-        ➕ Add Assignment
-      </button>
-    </form>
+    <!-- Assignment List -->
+    <section class="max-w-5xl mx-auto">
+      <h2 class="text-2xl font-semibold text-gray-700 mb-4">Your Assignments</h2>
 
-    <!-- Assignment list -->
-    <h2 class="text-2xl font-semibold mb-4">All Assignments</h2>
-    {% if assignments %}
-      <ul class="space-y-3">
-        {% for a in assignments %}
-          <li
-            class="border border-gray-200 rounded-xl p-4 shadow-sm transition
-            {% if a.is_past_due %} flash-red {% elif a.is_due_today or a.is_due_tomorrow %} flash-yellow {% else %} bg-green-50 {% endif %}"
-          >
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p class="font-semibold text-lg">{{ a.title }}</p>
-                <p class="text-sm text-gray-600">{{ a.class }} — Due {{ a.due_date }}</p>
-                <div class="mt-1">
-                  {% if a.is_past_due %}
-                    <span class="text-red-700 font-semibold">❌ Past Due</span>
-                  {% elif a.is_due_today %}
-                    <span class="text-yellow-700 font-semibold">🔥 Due Today!</span>
-                  {% elif a.is_due_tomorrow %}
-                    <span class="text-yellow-700 font-semibold">⏰ Due Tomorrow</span>
-                  {% else %}
-                    <span class="text-green-700 font-semibold">✅ On Track</span>
-                  {% endif %}
-                </div>
-              </div>
-              <div class="flex gap-3 mt-3 sm:mt-0">
-                <a href="/edit/{{ a.id }}" class="text-indigo-600 font-medium hover:underline">✏️ Edit</a>
-                <a href="/redirect/{{ a.id }}" target="_blank" class="text-green-600 font-medium hover:underline">🌐 Open</a>
+      {% if assignments %}
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {% for a in assignments %}
+          <div class="rounded-xl shadow-md overflow-hidden border
+            {% if a.is_past_due %} flash-red border-red-400
+            {% elif a.is_due_today %} flash-yellow border-yellow-400
+            {% else %} border-gray-200 bg-white {% endif %}
+          ">
+            <div class="p-5">
+              <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ a.title }}</h3>
+              <p class="text-sm text-gray-600 mb-2"><strong>Class:</strong> {{ a.class }}</p>
+              <p class="text-sm text-gray-600 mb-2"><strong>Due:</strong> {{ a.due_date }}</p>
+
+              {% if a.notes %}
+              <p class="text-sm text-gray-500 italic mb-3">{{ a.notes }}</p>
+              {% endif %}
+
+              <div class="flex justify-between items-center">
+                <a href="{{ url_for('edit', id=a.id) }}" class="text-blue-600 font-medium hover:underline text-sm">Edit</a>
+                <a href="{{ url_for('redirect_by_class', id=a.id) }}" target="_blank" class="text-indigo-600 font-medium hover:underline text-sm">Go to Class</a>
               </div>
             </div>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="text-gray-500 italic text-center mt-6">No assignments yet. Add one above!</p>
-    {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="text-center text-gray-500 italic mt-8">No assignments yet — add one above!</p>
+      {% endif %}
+    </section>
   </main>
 
   <!-- Footer -->
-  <footer class="bg-gray-200 text-gray-600 text-center py-3 mt-10 text-sm">
-    Made with ❤️ using Flask + Tailwind
+  <footer class="text-center text-sm text-gray-500 py-4 mt-auto">
+    Made with ❤️ using Flask + Tailwind | <a href="https://github.com" class="hover:underline">GitHub</a>
   </footer>
-
 </body>
 </html>
