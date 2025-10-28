@@ -1,0 +1,112 @@
+/* ---------- Base Page Styling ---------- */
+body {
+  font-family: 'Inter', sans-serif;
+  background: linear-gradient(135deg, #eef2ff, #f9fafb);
+  color: #1f2937;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---------- Navbar ---------- */
+nav {
+  background-color: #2563eb;
+  color: white;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+nav h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+/* ---------- Main Container ---------- */
+.container {
+  max-width: 800px;
+  margin: 2rem auto;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+  padding: 2rem;
+}
+
+/* ---------- Buttons ---------- */
+button,
+.btn {
+  cursor: pointer;
+  background-color: #2563eb;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  transition: 0.2s ease;
+}
+
+button:hover,
+.btn:hover {
+  background-color: #1e40af;
+}
+
+/* ---------- Form Inputs ---------- */
+input,
+textarea,
+select {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 0.5rem;
+  margin-bottom: 0.8rem;
+  font-size: 1rem;
+}
+
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
+}
+
+/* ---------- Assignment Cards ---------- */
+.assignment {
+  border: 1px solid #e5e7eb;
+  padding: 1rem;
+  border-radius: 10px;
+  margin-bottom: 1rem;
+  background-color: #f9fafb;
+  transition: background 0.2s ease;
+}
+
+.assignment:hover {
+  background-color: #f3f4f6;
+}
+
+.assignment .title {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.assignment .due-date {
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.assignment.past-due {
+  border-left: 5px solid #ef4444;
+  background-color: #fee2e2;
+}
+
+.assignment.due-soon {
+  border-left: 5px solid #facc15;
+  background-color: #fef9c3;
+}
+
+/* ---------- Footer ---------- */
+footer {
+  text-align: center;
+  font-size: 0.9rem;
+  padding: 1rem;
+  color: #6b7280;
+}
