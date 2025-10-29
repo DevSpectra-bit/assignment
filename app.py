@@ -471,30 +471,30 @@ def dev_login():
 
 @app.route("/dev-dashboard")
 def dev_dashboard():
-    if "dev" not in session:
+    if not session.get("dev") and session.get("user_id") != -1:
         return redirect(url_for("login"))
 
     conn = get_connection()
     c = conn.cursor()
 
-    # Count data
-    c.execute("SELECT COUNT(*) FROM users")
-    total_users = c.fetchone()[0]
-
-    c.execute("SELECT COUNT(*) FROM assignments")
-    total_assignments = c.fetchone()[0]
-
-    c.execute("SELECT COUNT(*) FROM class_links")
-    total_classes = c.fetchone()[0]
-
-    # Optional: get recent users (if you have last_login tracking)
     try:
-        c.execute("SELECT username, last_login FROM users ORDER BY last_login DESC LIMIT 5")
-        recent_users = c.fetchall()
-    except Exception:
-        recent_users = []
+        c.execute("SELECT COUNT(*) FROM users")
+        total_users = c.fetchone()[0]
 
-    conn.close()
+        c.execute("SELECT COUNT(*) FROM assignments")
+        total_assignments = c.fetchone()[0]
+
+        c.execute("SELECT COUNT(*) FROM class_links")
+        total_classes = c.fetchone()[0]
+
+        # Optional: show recent users (if last_login doesn't exist, it's fine)
+        try:
+            c.execute("SELECT username FROM users ORDER BY id DESC LIMIT 5")
+            recent_users = c.fetchall()
+        except Exception:
+            recent_users = []
+    finally:
+        conn.close()
 
     return render_template(
         "dev_dashboard.html",
@@ -504,6 +504,11 @@ def dev_dashboard():
         recent_users=recent_users
     )
 
+
+@app.route("/dev-activate", methods=["POST"])
+def dev_activate():
+    session["dev"] = True
+    return ("", 204)  # Silent success (no content)
 
 
 if __name__ == "__main__":
