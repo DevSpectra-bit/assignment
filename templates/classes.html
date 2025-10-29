@@ -1,139 +1,60 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Your Classes</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        body {
-            font-family: "Inter", sans-serif;
-            background: #f7f8fa;
-            margin: 0;
-            padding: 0;
-            color: #333;
-        }
-
-        .container {
-            max-width: 700px;
-            margin: 60px auto;
-            background: white;
-            padding: 30px;
-            border-radius: 16px;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
-        }
-
-        h1 {
-            text-align: center;
-            color: #222;
-        }
-
-        form {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        input[type="text"] {
-            flex: 1;
-            padding: 10px 12px;
-            border: 1px solid #ccc;
-            border-radius: 10px;
-            font-size: 15px;
-        }
-
-        button {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 10px 14px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-size: 15px;
-            transition: 0.2s;
-        }
-
-        button:hover {
-            background: #0056b3;
-        }
-
-        table {
-            width: 100%;
-            margin-top: 25px;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: 10px 8px;
-            text-align: left;
-        }
-
-        th {
-            background: #f1f3f5;
-        }
-
-        tr:nth-child(even) {
-            background: #fafafa;
-        }
-
-        a.delete {
-            color: #e63946;
-            text-decoration: none;
-            font-weight: bold;
-        }
-
-        a.delete:hover {
-            text-decoration: underline;
-        }
-
-        .nav {
-            text-align: center;
-            margin-top: 25px;
-        }
-
-        .nav a {
-            color: #007bff;
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .nav a:hover {
-            text-decoration: underline;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your Classes</title>
+  <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body>
-    <div class="container">
-        <h1>Your Classes</h1>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col">
 
-        <form action="{{ url_for('manage_classes') }}" method="POST">
-            <input type="text" name="class_name" placeholder="Class name (e.g. math)" required>
-            <input type="text" name="link" placeholder="Schoology link (https://...)" required>
-            <button type="submit">Add</button>
-        </form>
+  <!-- Header -->
+  <header class="bg-white shadow-md py-4 px-6 flex justify-between items-center">
+    <h1 class="text-3xl font-bold text-indigo-600">Your Classes</h1>
+    <a href="{{ url_for('index') }}" class="text-gray-600 hover:text-indigo-600 font-medium">
+      ← Back to Assignments
+    </a>
+  </header>
 
-        {% if classes %}
-        <table>
-            <tr>
-                <th>Class Name</th>
-                <th>Link</th>
-                <th>Action</th>
-            </tr>
-            {% for c in classes %}
-            <tr>
-                <td>{{ c.class_name }}</td>
-                <td><a href="{{ c.link }}" target="_blank">{{ c.link }}</a></td>
-                <td><a href="{{ url_for('delete_class', id=c.id) }}" class="delete">Delete</a></td>
-            </tr>
-            {% endfor %}
-        </table>
-        {% else %}
-        <p style="text-align:center; margin-top:20px;">You haven’t added any classes yet.</p>
-        {% endif %}
+  <main class="flex-1 p-6 max-w-4xl mx-auto">
+    <!-- Add Class Form -->
+    <section class="bg-white rounded-xl shadow-md p-6 mb-8">
+      <h2 class="text-xl font-semibold text-indigo-600 mb-4">Add a New Class</h2>
+      <form action="{{ url_for('manage_classes') }}" method="POST" class="grid md:grid-cols-2 gap-4">
+        <input type="text" name="class_name" placeholder="Class name (e.g. Math)" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <input type="text" name="link" placeholder="Class link (e.g. https://...)" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
+        <button type="submit" class="col-span-2 bg-indigo-600 text-white font-semibold py-2 rounded-lg hover:bg-indigo-700 transition">
+          Add Class
+        </button>
+      </form>
+    </section>
 
-        <div class="nav">
-            <a href="{{ url_for('index') }}">← Back to assignments</a>
+    <!-- Class List -->
+    <section>
+      <h2 class="text-2xl font-semibold text-gray-700 mb-4">Your Saved Classes</h2>
+
+      {% if classes %}
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {% for c in classes %}
+          <div class="bg-white rounded-xl shadow-md p-5 border border-gray-200 hover:shadow-lg transition">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2 capitalize">{{ c.class_name }}</h3>
+            <a href="{{ c.link }}" target="_blank" class="text-indigo-600 hover:underline text-sm break-all">{{ c.link }}</a>
+
+            <div class="mt-4 flex justify-end">
+              <a href="{{ url_for('delete_class', id=c.id) }}" class="text-red-500 text-sm font-medium hover:underline">Delete</a>
+            </div>
+          </div>
+          {% endfor %}
         </div>
-    </div>
+      {% else %}
+        <p class="text-center text-gray-500 italic mt-8">You haven’t added any classes yet.</p>
+      {% endif %}
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center text-sm text-gray-500 py-4 mt-auto">
+    Made with ❤️ using Flask + Tailwind
+  </footer>
 </body>
 </html>

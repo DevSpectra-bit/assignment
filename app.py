@@ -75,6 +75,15 @@ def init_db():
                 password TEXT NOT NULL
             );
         """)
+    # Add this inside your init_db() function after creating the users table
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
+    else:
+        # SQLite doesn’t support IF NOT EXISTS for ALTER TABLE
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN has_seen_tutorial INTEGER DEFAULT 0;")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
     # assignments
     if IS_POSTGRES:
@@ -185,7 +194,12 @@ def login():
             if stored_pw and check_password_hash(stored_pw, password):
                 session["user_id"] = row_val(user, "id")
                 session["username"] = row_val(user, "username")
-                return redirect(url_for("index"))
+                has_seen_tutorial = user["has_seen_tutorial"] if "has_seen_tutorial" in user.keys() else False
+                if not has_seen_tutorial:
+                    return redirect(url_for("tutorial"))
+                else:
+                    return redirect(url_for("index"))
+
         flash("❌ Invalid username or password.")
     return render_template("login.html")
 
@@ -265,6 +279,24 @@ def add():
         conn.close()
     return redirect(url_for("index"))
 
+@app.route("/delete/<int:id>", methods=["GET"])
+def delete(id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    # Use the correct placeholder style depending on the database
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute("DELETE FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
+    else:
+        c.execute("DELETE FROM assignments WHERE id = ? AND user_id = ?", (id, session["user_id"]))
+
+    conn.commit()
+    c.close()
+    conn.close()
+    return redirect(url_for("index"))
 
 # --- CLASS LINKS (per-user) ---
 @app.route("/classes", methods=["GET", "POST"])
@@ -399,6 +431,32 @@ def edit(id):
         conn.close()
 
     return render_template("edit.html", assignment=assignment)
+
+@app.route("/tutorial")
+def tutorial():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    return render_template("tutorial.html")
+
+@app.route("/finish_tutorial", methods=["POST"])
+def finish_tutorial():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
+        c.execute("UPDATE users SET has_seen_tutorial = TRUE WHERE id = %s", (session["user_id"],))
+    else:
+        c.execute("UPDATE users SET has_seen_tutorial = 1 WHERE id = ?", (session["user_id"],))
+
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for("index"))
+
 
 
 if __name__ == "__main__":

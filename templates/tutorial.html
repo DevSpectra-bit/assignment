@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome Tutorial</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background: #f7f8fa;
+            margin: 0;
+            color: #333;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 60px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+            text-align: center;
+        }
+
+        h1 {
+            color: #222;
+        }
+
+        p {
+            line-height: 1.6;
+            margin: 16px 0;
+        }
+
+        button {
+            margin-top: 30px;
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to your very own Assignment Tracker!</h1>
+        <p>Here’s a quick rundown of how things work:</p>
+        <p>✅ <b>Add assignments</b> from the home page — include the class, due date, and notes.<br>
+        ✅ <b>Manage class links</b> under “Classes” — so clicking a class takes you straight to its Schoology page.<br>
+        ✅ <b>Log in anytime</b> to see your upcoming assignments, automatically sorted by due date.<br>
+        ✅ <b> Flashing lights</b> — We use multiple flashers to alert you of different things. <b>Red flashing</b> cards indicate an assignment that is pass the due date. <b>Yellow Flashing</b> cards can mean two things, an assignment is due on that day, or the next day.</p>
+
+        <form method="POST" action="{{ url_for('finish_tutorial') }}">
+            <button type="submit">Got it! Take me to my assignments</button>
+        </form>
+    </div>
+</body>
+</html>
