@@ -471,8 +471,6 @@ def dev_login():
 
 @app.route("/dev-dashboard")
 def dev_dashboard():
-    if "dev" not in session:
-        return redirect(url_for("login"))
 
     conn = get_connection()
     c = conn.cursor()
