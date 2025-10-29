@@ -469,6 +469,28 @@ def dev_login():
             flash("Invalid PIN.", "error")
     return render_template("dev_login.html")
 
+@app.route("/dev-dashboard")
+def dev_dashboard():
+    if "dev" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    total_users = c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    total_assignments = c.execute("SELECT COUNT(*) FROM assignments").fetchone()[0]
+    total_classes = c.execute("SELECT COUNT(*) FROM classes").fetchone()[0]
+
+    # optional: track last_login in your users table
+    recent_users = c.execute("SELECT username, last_login FROM users ORDER BY last_login DESC LIMIT 5").fetchall()
+
+    conn.close()
+    return render_template("dev_dashboard.html",
+                           total_users=total_users,
+                           total_assignments=total_assignments,
+                           total_classes=total_classes,
+                           recent_users=recent_users)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
