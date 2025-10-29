@@ -457,6 +457,17 @@ def finish_tutorial():
 
     return redirect(url_for("index"))
 
+@app.route("/dev-login", methods=["GET", "POST"])
+def dev_login():
+    if request.method == "POST":
+        pin = request.form.get("pin")
+        if pin == os.getenv("DEV_PIN", "1234"):  # You can set DEV_PIN in .env
+            session["user_id"] = -1  # or your dev user id
+            flash("Developer mode activated.", "info")
+            return redirect(url_for("index"))
+        else:
+            flash("Invalid PIN.", "error")
+    return render_template("dev_login.html")
 
 
 if __name__ == "__main__":
