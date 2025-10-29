@@ -217,6 +217,8 @@ def index():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
+    print("Session:", dict(session))
+
     conn = get_connection()
     c = conn.cursor()
     try:
