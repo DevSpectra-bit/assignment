@@ -464,7 +464,7 @@ def dev_login():
         if pin == os.getenv("DEV_PIN", "1234"):  # You can set DEV_PIN in .env
             session["user_id"] = -1  # or your dev user id
             flash("Developer mode activated.", "info")
-            return redirect(url_for("index"))
+            return redirect(url_for("dev_dashboard"))
         else:
             flash("Invalid PIN.", "error")
     return render_template("dev_login.html")
