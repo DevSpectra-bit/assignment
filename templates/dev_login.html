@@ -88,8 +88,7 @@
     <div class="login-box">
         <h1>Login</h1>
         <form action="{{ url_for('login') }}" method="POST">
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
+            <input type="text" name="pin" placeholder="PIN" required>
             <button type="submit">Login</button>
         </form>
         <p>Don’t have an account? <a href="{{ url_for('register') }}">Register</a></p>
