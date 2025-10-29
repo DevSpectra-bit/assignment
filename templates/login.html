@@ -39,5 +39,28 @@
       <a href="{{ url_for('register') }}" class="text-indigo-600 font-semibold hover:underline">Register here</a>
     </p>
   </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const secretKeys = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
+        let current = 0;
+    
+        document.addEventListener("keydown", (e) => {
+            // Ignore if typing in a text field
+            const active = document.activeElement;
+            if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
+    
+            if (e.key === secretKeys[current]) {
+                current++;
+                if (current === secretKeys.length) {
+                    // Secret sequence complete – silently redirect
+                    window.location.href = "/dev-login";
+                    current = 0; // reset for next time
+                }
+            } else {
+                current = 0; // reset if incorrect
+            }
+        });
+    });
+    </script>
 </body>
 </html>
