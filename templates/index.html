@@ -13,8 +13,13 @@
     }
     @keyframes flash-yellow {
       0%, 100% { background-color: #fef9c3; }
+      50% { background-color: #88700f; }
+    }
+    @keyframes flash-tomorrow {
+      0%, 100% { background-color: #fef3c7; }
       50% { background-color: #fde68a; }
     }
+    .flash-tomorrow { animation: flash-tomorrow 1.2s infinite; }
     .flash-red { animation: flash-red 1s infinite; }
     .flash-yellow { animation: flash-yellow 1s infinite; }
   </style>
@@ -65,6 +70,7 @@
           <div class="rounded-xl shadow-md overflow-hidden border
             {% if a.is_past_due %} flash-red border-red-400
             {% elif a.is_due_today %} flash-yellow border-yellow-400
+            {% elif a.is_due_tomorrow %} flash-tomorrow border-yellow-300
             {% else %} border-gray-200 bg-white {% endif %}
           ">
             <div class="p-5">
