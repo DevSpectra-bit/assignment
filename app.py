@@ -478,19 +478,18 @@ def dev_dashboard():
     c = conn.cursor()
 
     try:
-        c.execute("SELECT COUNT(*) FROM users")
-        total_users = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) AS total FROM users")
+        total_users = c.fetchone()["total"]
 
-        c.execute("SELECT COUNT(*) FROM assignments")
-        total_assignments = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) AS total FROM assignments")
+        total_assignments = c.fetchone()["total"]
 
-        c.execute("SELECT COUNT(*) FROM class_links")
-        total_classes = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) AS total FROM class_links")
+        total_classes = c.fetchone()["total"]
 
-        # Optional: show recent users (if last_login doesn't exist, it's fine)
         try:
             c.execute("SELECT username FROM users ORDER BY id DESC LIMIT 5")
-            recent_users = c.fetchall()
+            recent_users = [row["username"] for row in c.fetchall()]
         except Exception:
             recent_users = []
     finally:
