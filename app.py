@@ -464,17 +464,20 @@ def dev_login():
     if request.method == "POST":
         pin = request.form.get("pin")
         if pin == os.getenv("DEV_PIN", "1234"):  # You can set DEV_PIN in .env
-            session["user_id"] = -1  # or your dev user id
-            flash("Developer mode activated.", "info")
+            session.clear()
+            session["user_id"] = -1
+            session["dev"] = True  # ✅ Mark this session as developer
+            session["username"] = "developer"
+            flash("🧠 Developer mode activated.", "info")
             return redirect(url_for("dev_dashboard"))
         else:
-            flash("Invalid PIN.", "error")
+            flash("❌ Invalid PIN.", "error")
     return render_template("dev_login.html")
 
 @app.route("/dev-dashboard")
 def dev_dashboard():
     if not session.get("dev") and session.get("user_id") != -1:
-        return redirect(url_for("login"))
+        return redirect(url_for("logout"))
 
     conn = get_connection()
     c = conn.cursor()
@@ -510,6 +513,55 @@ def dev_dashboard():
 def dev_activate():
     session["dev"] = True
     return ("", 204)  # Silent success (no content)
+
+
+@app.route("/dev-stats")
+def dev_stats():
+    if not session.get("dev") and session.get("user_id") != -1:
+        return redirect(url_for("logout"))
+    return render_template("dev_stats_home.html")
+
+
+@app.route("/dev-stats/total")
+def dev_stats_total():
+    if not session.get("dev") and session.get("user_id") != -1:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT cl AS class, COUNT(*) AS total_assignments
+        FROM assignments
+        GROUP BY cl
+        ORDER BY total_assignments DESC
+    """)
+    total_assignments = c.fetchall()
+
+    conn.close()
+    return render_template("dev_stats_total.html", total_assignments=total_assignments)
+
+
+@app.route("/dev-stats/overdue")
+def dev_stats_overdue():
+    if not session.get("dev") and session.get("user_id") != -1:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT cl AS class, ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT user_id), 2) AS avg_overdue
+        FROM assignments
+        WHERE due_date < CURRENT_DATE
+        GROUP BY cl
+        ORDER BY avg_overdue DESC
+    """)
+    overdue_per_class = c.fetchall()
+
+    conn.close()
+    return render_template("dev_stats_overdue.html", overdue_per_class=overdue_per_class)
+
 
 
 if __name__ == "__main__":

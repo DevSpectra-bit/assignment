@@ -152,6 +152,8 @@
         <p style="text-align:center; margin-top:10px;">No recent users found.</p>
         {% endif %}
 
+        <a href="{{ url_for('dev_stats') }}" class="button">📈 View Class Insights</a>
+
         <div class="back">
             <a href="{{ url_for('logout') }}">← Back to Assignments</a>
         </div>

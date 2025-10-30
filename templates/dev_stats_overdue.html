@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Overdue Assignments by Class</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background: #f7f8fa;
+            margin: 0;
+            color: #333;
+        }
+
+        header {
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: #007bff;
+            font-size: 24px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 40px auto;
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+        }
+
+        canvas {
+            width: 100% !important;
+            max-height: 400px;
+            margin-top: 30px;
+        }
+
+        table {
+            width: 100%;
+            margin-top: 40px;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: left;
+        }
+
+        th {
+            background: #f1f3f5;
+        }
+
+        tr:nth-child(even) {
+            background: #fafafa;
+        }
+
+        .back {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .back a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .back a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Overdue Assignments per Class</h1>
+        <a href="{{ url_for('logout') }}" style="color:#e63946;text-decoration:none;font-weight:500;">Logout</a>
+    </header>
+
+    <div class="container">
+        <h2>Overdue Overview</h2>
+        <p style="color:#666;">This chart shows the average number of overdue assignments per student in each class.</p>
+
+        <canvas id="overdueChart"></canvas>
+
+        <table>
+            <tr>
+                <th>Class</th>
+                <th>Avg Overdue Assignments</th>
+            </tr>
+            {% for cl, avg in overdue_per_class %}
+            <tr>
+                <td>{{ cl }}</td>
+                <td>{{ avg }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+
+        <div class="back">
+            <a href="{{ url_for('dev_stats') }}">← Back to Stats Home</a>
+        </div>
+    </div>
+
+    <script>
+        const overdueLabels = JSON.parse(`{{ overdue_per_class | map(attribute='class') | list | tojson | safe }}`);
+        const overdueData = JSON.parse(`{{ overdue_per_class | map(attribute='avg_overdue') | list | tojson | safe }}`);
+
+        new Chart(document.getElementById('overdueChart'), {
+            type: 'bar',
+            data: {
+                labels: overdueLabels,
+                datasets: [{
+                    label: 'Avg Overdue per Student',
+                    data: overdueData,
+                    backgroundColor: '#ff6b6b88',
+                    borderColor: '#ff6b6b',
+                    borderWidth: 1.5,
+                    borderRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
