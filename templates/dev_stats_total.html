@@ -96,12 +96,13 @@
                 <th>Class</th>
                 <th>Total Assignments</th>
             </tr>
-            {% for cl, total in total_assignments %}
-            <tr>
-                <td>{{ cl }}</td>
-                <td>{{ total }}</td>
-            </tr>
+            {% for row in total_assignments %}
+                <tr>
+                <td>{{ row.class }}</td>
+                <td>{{ row.total_assignments }}</td>
+                </tr>
             {% endfor %}
+
         </table>
 
 
