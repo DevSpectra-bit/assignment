@@ -538,6 +538,7 @@ def dev_stats_total():
     """)
     total_assignments = c.fetchall()
 
+
     conn.close()
     return render_template("dev_stats_total.html", total_assignments=total_assignments)
 

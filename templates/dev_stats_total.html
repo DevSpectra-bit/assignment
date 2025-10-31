@@ -96,13 +96,14 @@
                 <th>Class</th>
                 <th>Total Assignments</th>
             </tr>
-            {% for cl, count in total_assignments %}
+            {% for cl, total in total_assignments %}
             <tr>
                 <td>{{ cl }}</td>
-                <td>{{ count }}</td>
+                <td>{{ total }}</td>
             </tr>
             {% endfor %}
         </table>
+
 
         <div class="back">
             <a href="{{ url_for('dev_stats') }}">← Back to Stats Home</a>
