@@ -98,8 +98,8 @@
             </tr>
             {% for cl, avg in overdue_per_class %}
             <tr>
-                <td>{{ cl }}</td>
-                <td>{{ avg }}</td>
+                <td>{{ row.class }}</td>
+                <td>{{ row.avg }}</td>
             </tr>
             {% endfor %}
         </table>
