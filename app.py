@@ -537,6 +537,7 @@ def dev_stats_total():
         ORDER BY total_assignments DESC
     """)
     total_assignments = c.fetchall()
+    print(total_assignments)
 
 
     conn.close()
