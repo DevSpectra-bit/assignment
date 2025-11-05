@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        body {
+            font-family: "Inter", sans-serif;
+            background: #f7f8fa;
+            margin: 0;
+            padding: 0;
+            color: #333;
+        }
+
+        header {
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: #007bff;
+            font-size: 24px;
+            margin: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 40px auto;
+            background: white;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+            line-height: 1.7;
+        }
+
+        h2 {
+            color: #007bff;
+            margin-top: 30px;
+            font-size: 20px;
+        }
+
+        p {
+            color: #555;
+            margin-top: 10px;
+        }
+
+        ul {
+            color: #555;
+            margin-top: 10px;
+        }
+
+        .back {
+            text-align: center;
+            margin-top: 40px;
+        }
+
+        .back a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .back a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Privacy Policy</h1>
+    </header>
+
+    <div class="container">
+        <p><strong>Last updated:</strong> {{ current_date }}</p>
+
+        <h2>1. Overview</h2>
+        <p>This website is designed to help students manage their assignments and classes in a secure and organized way. We value your privacy and are committed to protecting your information.</p>
+
+        <h2>2. Information We Collect</h2>
+        <p>We only collect the information necessary to provide and improve the service. This includes:</p>
+        <ul>
+            <li>Username and login credentials (encrypted and stored securely)</li>
+            <li>Class names and assignment details you input</li>
+            <li>Basic usage data (like number of assignments completed) for internal analytics</li>
+        </ul>
+
+        <h2>3. How We Use Your Information</h2>
+        <p>Your data is used solely to:</p>
+        <ul>
+            <li>Display and organize your assignments and due dates</li>
+            <li>Improve the performance and reliability of the service</li>
+            <li>Provide anonymous insights to improve class engagement (if enabled)</li>
+        </ul>
+
+        <h2>4. Data Protection</h2>
+        <p>All sensitive data, such as passwords, is encrypted using industry-standard methods. We never sell, share, or distribute personal data with third parties.</p>
+
+        <h2>5. Cookies and Local Storage</h2>
+        <p>This site uses browser cookies or local storage to keep you logged in between sessions. No personal data is stored in cookies.</p>
+
+        <h2>6. Your Rights</h2>
+        <p>You can request to delete your account or all stored data at any time. Simply contact the site administrator or use the “Delete Account” feature in your settings.</p>
+
+        <h2>7. Changes to This Policy</h2>
+        <p>We may update this policy from time to time. Significant updates will be announced on the main page or during login.</p>
+
+        <div class="back">
+            <a href="{{ url_for('index') }}">← Back to Home</a>
+        </div>
+    </div>
+</body>
+</html>

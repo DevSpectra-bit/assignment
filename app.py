@@ -1,6 +1,6 @@
 # app.py
 from flask import Flask, render_template, request, redirect, url_for, session, flash
-from datetime import datetime
+from datetime import datetime, date
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -236,7 +236,12 @@ def index():
         row = dict(r) if IS_POSTGRES else dict(r)  # both support dict() for consistent access
         # validate due_date format
         try:
-            due_date = datetime.strptime(row["due_date"], "%Y-%m-%d").date()
+            due_date_val = row["due_date"]
+            if isinstance(due_date_val, str):
+                due_date = datetime.strptime(due_date_val.split(" ")[0], "%Y-%m-%d").date()
+            else:
+                due_date = due_date_val  # already a date object
+
         except Exception:
             continue
         days_left = (due_date - today).days
@@ -564,7 +569,9 @@ def dev_stats_overdue():
     conn.close()
     return render_template("dev_stats_overdue.html", overdue_per_class=overdue_per_class)
 
-
+@app.route("/privacy-policy")
+def privacy():
+    return render_template("privacy.html", current_date=date.today().strftime("%B %d, %Y"))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
