@@ -137,6 +137,12 @@ def init_db():
 
 init_db()
 
+@app.before_request
+def check_for_maintenance():
+    if os.getenv("MAINTENANCE_MODE", "False").lower() == "true":
+        # allow access to static files and maintenance page itself
+        if request.endpoint not in ("maintenance", "static"):
+            return redirect(url_for("maintenance"))
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -572,6 +578,10 @@ def dev_stats_overdue():
 @app.route("/privacy-policy")
 def privacy():
     return render_template("privacy.html", current_date=date.today().strftime("%B %d, %Y"))
+
+@app.route("/maintenance")
+def maintenance():
+    return render_template("maintenance.html", year=datetime.now().year), 503
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
