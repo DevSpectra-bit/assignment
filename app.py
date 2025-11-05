@@ -7,6 +7,7 @@ from psycopg2.extras import RealDictCursor
 import sqlite3
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
+import json
 
 # Load .env if available
 load_dotenv()
@@ -16,7 +17,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
-
+MAINTENANCE_FILE = "maintenance.json"
 
 # --- Helpers ---
 def get_connection():
@@ -52,6 +53,18 @@ def placeholder(q_postgres, q_sqlite):
     """Return query string appropriate to current DB type."""
     return q_postgres if IS_POSTGRES else q_sqlite
 
+def get_maintenance():
+    if os.path.exists(MAINTENANCE_FILE):
+        with open(MAINTENANCE_FILE) as f:
+            try:
+                return json.load(f).get("enabled", False)
+            except json.JSONDecodeError:
+                return False
+    return False
+
+def set_maintenance(value: bool):
+    with open(MAINTENANCE_FILE, "w") as f:
+        json.dump({"enabled": value}, f)
 
 # --- DB setup ---
 def init_db():
@@ -137,12 +150,42 @@ def init_db():
 
 init_db()
 
+from flask import request
+
+# put this BEFORE your route definitions
 @app.before_request
 def check_for_maintenance():
-    if os.getenv("MAINTENANCE_MODE", "False").lower() == "true":
-        # allow access to static files and maintenance page itself
-        if request.endpoint not in ("maintenance", "static"):
-            return redirect(url_for("maintenance"))
+    # if maintenance is not enabled, do nothing
+    if not get_maintenance():
+        return None
+
+    # allow access to static assets always
+    if request.path.startswith("/static/"):
+        return None
+
+    # list of endpoints/paths to allow during maintenance
+    whitelist_endpoints = {
+        "maintenance",               # the maintenance page itself
+        "dev_dashboard",
+        "dev_login",
+        "dev_toggle_maintenance",
+        "dev_login_activate",        # any other dev endpoints you have
+        "dev_login",                 # ensure dev-login allowed
+    }
+
+    # allow specific endpoints by name (if request.endpoint is set)
+    endpoint = (request.endpoint or "").split(".")[-1]
+    if endpoint in whitelist_endpoints:
+        return None
+
+    # allow dev sessions (you set session["dev"] in dev-login)
+    if session.get("dev") or session.get("user_id") == -1:
+        return None
+
+    # otherwise redirect to maintenance page (503)
+    return redirect(url_for("maintenance"))
+
+
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -516,7 +559,8 @@ def dev_dashboard():
         total_users=total_users,
         total_assignments=total_assignments,
         total_classes=total_classes,
-        recent_users=recent_users
+        recent_users=recent_users,
+        maintenance_mode=get_maintenance()
     )
 
 
@@ -582,6 +626,15 @@ def privacy():
 @app.route("/maintenance")
 def maintenance():
     return render_template("maintenance.html", year=datetime.now().year), 503
+
+@app.route("/toggle-maintenance")
+def dev_toggle_maintenance():
+    current = get_maintenance()
+    new_state = not current
+    set_maintenance(new_state)
+    flash(f"Maintenance mode {'ENABLED' if new_state else 'DISABLED'}.", "info")
+    return redirect(url_for("dev_dashboard"))
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
