@@ -73,8 +73,8 @@
         <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {% for a in assignments %}
           <div class="rounded-xl shadow-md overflow-hidden border
-            {% if a.is_past_due %} flash-red border-red-400
-            {% elif a.submitted %} flask-submitted border-gray-200
+           {% if a.submitted %} flask-submitted border-gray-200
+            {% elif a.is_past_due %} flash-red border-red-400
             {% elif a.is_due_today %} flash-yellow border-yellow-400
             {% elif a.is_due_tomorrow %} flash-tomorrow border-yellow-300
             {% else %} border-gray-200 bg-white {% endif %}
