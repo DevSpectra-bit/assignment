@@ -298,8 +298,10 @@ def index():
             **row,
             "is_past_due": days_left < 0,
             "is_due_today": days_left == 0,
-            "is_due_tomorrow": days_left == 1
+            "is_due_tomorrow": days_left == 1,
+            "submitted": row.get("submitted", False)
         })
+
     return render_template("index.html", assignments=annotated)
 
 
@@ -335,24 +337,43 @@ def add():
         conn.close()
     return redirect(url_for("index"))
 
-@app.route("/delete/<int:id>", methods=["GET"])
+@app.route("/delete/<int:id>", methods=["POST"])
 def delete(id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            c.execute("DELETE FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
+        else:
+            c.execute("DELETE FROM assignments WHERE id = ? AND user_id = ?", (id, session["user_id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    flash("Assignment deleted successfully.", "info")
+    return redirect(url_for("index"))
+
+
+@app.route("/submit/<int:id>", methods=["POST"])
+def submit_assignment(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
     conn = get_connection()
     c = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            c.execute("UPDATE assignments SET submitted = TRUE WHERE id = %s AND user_id = %s", (id, session["user_id"]))
+        else:
+            c.execute("UPDATE assignments SET submitted = 1 WHERE id = ? AND user_id = ?", (id, session["user_id"]))
+        conn.commit()
+    finally:
+        conn.close()
 
-    # Use the correct placeholder style depending on the database
-    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
-        c.execute("DELETE FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
-    else:
-        c.execute("DELETE FROM assignments WHERE id = ? AND user_id = ?", (id, session["user_id"]))
-
-    conn.commit()
-    c.close()
-    conn.close()
+    flash("Assignment marked as submitted!", "success")
     return redirect(url_for("index"))
+
 
 # --- CLASS LINKS (per-user) ---
 @app.route("/classes", methods=["GET", "POST"])

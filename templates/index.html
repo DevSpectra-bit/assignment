@@ -19,9 +19,14 @@
       0%, 100% { background-color: #fef3c7; }
       50% { background-color: #fde68a; }
     }
+    @keyframes flash-submitted {
+      0%, 100% { background-color: #04ff11}
+    }
+
     .flash-tomorrow { animation: flash-tomorrow 1.2s infinite; }
     .flash-red { animation: flash-red 1s infinite; }
     .flash-yellow { animation: flash-yellow 1s infinite; }
+    .flask-submitted { animation: flash-submitted 1.2s infinite; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col">
@@ -69,6 +74,7 @@
           {% for a in assignments %}
           <div class="rounded-xl shadow-md overflow-hidden border
             {% if a.is_past_due %} flash-red border-red-400
+            {% elif a.submitted %} flask-submitted border-gray-200
             {% elif a.is_due_today %} flash-yellow border-yellow-400
             {% elif a.is_due_tomorrow %} flash-tomorrow border-yellow-300
             {% else %} border-gray-200 bg-white {% endif %}
@@ -85,9 +91,15 @@
               <div class="flex justify-between items-center">
                 <a href="{{ url_for('edit', id=a.id) }}" class="text-blue-600 font-medium hover:underline text-sm">Edit</a>
                 <a href="{{ url_for('redirect_by_class', id=a.id) }}" target="_blank" class="text-indigo-600 font-medium hover:underline text-sm">Go to Class</a>
-                <a href="{{ url_for('delete', id=a.id) }}" class="text-red-500 font-medium hover:underline text-sm" onclick="return confirm('Are you sure you want to delete this assignment? This cannot be undone.')">Delete</a>
-              </div>
 
+                {% if not a.submitted %}
+                  <form action="{{ url_for('submit_assignment', id=a.id) }}" method="POST" style="display:inline;">
+                    <button type="submit" class="text-green-600 font-medium hover:underline text-sm">Submit</button>
+                  </form>
+                {% else %}
+                  <span class="text-gray-400 text-sm italic">Submitted</span>
+                {% endif %}
+              </div>
             </div>
           </div>
           {% endfor %}
