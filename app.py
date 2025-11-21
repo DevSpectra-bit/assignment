@@ -14,6 +14,7 @@ load_dotenv()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+app.config.from_object("config.Config")
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
@@ -749,6 +750,84 @@ def delete_class(class_id):
     conn.close()
 
     return redirect("/my-classes")
+
+@app.route("/account")
+def account():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    try:
+        if IS_POSTGRES:
+            c.execute("SELECT id, username, has_seen_tutorial, is_admin FROM users WHERE id = %s", (session["user_id"],))
+        else:
+            c.execute("SELECT id, username, has_seen_tutorial, is_admin FROM users WHERE id = ?", (session["user_id"],))
+
+        user = c.fetchone()
+    finally:
+        conn.close()
+
+    return render_template("account.html", user=user)
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    user_id = session["user_id"]
+
+    if request.method == "POST":
+        old_pw = request.form["old_password"]
+        new_pw = request.form["new_password"]
+        confirm_pw = request.form["confirm_password"]
+
+        if new_pw != confirm_pw:
+            flash("New passwords do not match.")
+            return redirect(url_for("change_password"))
+
+        conn = get_connection()
+        c = conn.cursor()
+
+        try:
+            if IS_POSTGRES:
+                c.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            else:
+                c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+
+            user = c.fetchone()
+        finally:
+            conn.close()
+
+        if not user or not check_password_hash(user["password"], old_pw):
+            flash("Incorrect current password.")
+            return redirect(url_for("change_password"))
+
+        hashed = generate_password_hash(new_pw)
+
+        conn = get_connection()
+        c = conn.cursor()
+        try:
+            if IS_POSTGRES:
+                c.execute("UPDATE users SET password = %s WHERE id = %s", (hashed, user_id))
+            else:
+                c.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+        flash("Password updated successfully!")
+        return redirect("/account")
+
+    return render_template("change_password.html")
+
+@app.route("/grade-tracker")
+def grade_tracker():
+    if not app.config["FEATURE_FLAGS"]["grade_tracker"]:
+        return "This feature is currently disabled.", 403
+
+    return render_template("grade_tracker.html")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Grade Tracker — Coming Soon</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-gray-50 to-indigo-50 flex items-center justify-center p-6">
+
+  <main class="max-w-xl w-full bg-white rounded-2xl shadow-lg p-8 text-center">
+    <div class="mb-6">
+      <svg xmlns="http://www.w3.org/2000/svg" class="mx-auto h-16 w-16 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6M5 7h14M5 7v13a1 1 0 001 1h12a1 1 0 001-1V7" />
+      </svg>
+    </div>
+
+    <h1 class="text-2xl font-extrabold text-gray-800 mb-2">Grade Tracker — Coming Soon</h1>
+    <p class="text-gray-600 mb-6">
+      We’re building a powerful grade tracker to help you track assignments and calculate averages.
+      For now this page is disabled while under development.
+    </p>
+
+    <div class="flex justify-center gap-3">
+      <a href="/" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition">
+        ← Back to Assignments
+      </a>
+
+      <!-- Admin quick toggle link (optional) -->
+      <!-- Remove or update URL if you don’t have a toggle route -->
+      <a href="/dev-dashboard" class="inline-block bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition">
+        Dev Dashboard
+      </a>
+    </div>
+
+    <p class="mt-6 text-sm text-gray-400">Want this live sooner? Enable <code>grade_tracker</code> in your feature flags.</p>
+  </main>
+
+</body>
+</html>

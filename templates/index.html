@@ -37,14 +37,47 @@
 
     {% if session.get("username") %}
     <div class="flex items-center gap-4">
-      <a href="{{ url_for('manage_classes') }}" 
-        class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition">
-        Manage Classes
-      </a>
-      <a href="{{ url_for('logout') }}" 
-        class="text-gray-600 hover:text-indigo-600 font-medium">
-        Logout ({{ session['username'] }})
-      </a>
+
+      <!-- Settings Dropdown -->
+      <div class="relative inline-block text-left">
+        
+        <button id="settingsButton" 
+                class="text-gray-600 hover:text-indigo-600 font-medium focus:outline-none">
+          Settings ({{ session['username'] }})
+        </button>
+
+        <div id="settingsMenu"
+            class="hidden absolute right-0 mt-2 w-44 bg-white border rounded-lg shadow-lg py-1 z-50">
+
+          <!-- ACCOUNT -->
+          <a href="/account" 
+            class="block px-4 py-2 hover:bg-gray-100">
+            Account Info
+          </a>
+
+          <!-- MANAGE CLASSES -->
+          <a href="{{ url_for('manage_classes') }}" 
+            class="block px-4 py-2 hover:bg-gray-100">
+            Manage Classes
+          </a>
+
+          <!-- GRADE TRACKER -->
+          <a href="/grade-tracker" 
+            class="block px-4 py-2 hover:bg-gray-100">
+            Grade Tracker
+          </a>
+
+          <div class="border-t my-1"></div>
+
+          <!-- LOGOUT -->
+          <a href="{{ url_for('logout') }}"
+            class="block px-4 py-2 text-red-600 hover:bg-gray-100">
+            Logout
+          </a>
+
+        </div>
+      </div>
+
     </div>
     {% endif %}
   </header>
@@ -115,4 +148,19 @@
     Made with ❤️ using Flask + Tailwind | <a href="https://github.com" class="hover:underline">GitHub</a>
   </footer>
 </body>
+<script>
+document.getElementById('settingsButton').addEventListener('click', function () {
+  const menu = document.getElementById('settingsMenu');
+  menu.classList.toggle('hidden');
+});
+
+window.addEventListener('click', function (event) {
+  const menu = document.getElementById('settingsMenu');
+  const button = document.getElementById('settingsButton');
+
+  if (!button.contains(event.target) && !menu.contains(event.target)) {
+    menu.classList.add('hidden');
+  }
+});
+</script>
 </html>
