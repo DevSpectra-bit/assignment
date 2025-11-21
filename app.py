@@ -165,11 +165,6 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
-    # Add is_admin column for admin bypass
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;")
-    except sqlite3.OperationalError:
-        pass
 
 
     conn.commit()
