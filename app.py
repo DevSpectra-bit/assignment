@@ -143,6 +143,34 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
+    # classes table (real class pages)
+    if IS_POSTGRES:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                description TEXT,
+                color TEXT
+            );
+        """)
+    else:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                name TEXT NOT NULL,
+                description TEXT,
+                color TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+        """)
+    # Add is_admin column for admin bypass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;")
+    except sqlite3.OperationalError:
+        pass
+
 
     conn.commit()
     conn.close()
@@ -150,39 +178,36 @@ def init_db():
 
 init_db()
 
-from flask import request
 
 # put this BEFORE your route definitions
 @app.before_request
 def check_for_maintenance():
-    # if maintenance is not enabled, do nothing
+
     if not get_maintenance():
         return None
 
-    # allow access to static assets always
     if request.path.startswith("/static/"):
         return None
 
-    # list of endpoints/paths to allow during maintenance
+    # FULL BYPASS: dev, special -1 user, or admin user
+    if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+        return None
+
     whitelist_endpoints = {
-        "maintenance",               # the maintenance page itself
+        "maintenance",
         "dev_dashboard",
         "dev_login",
         "dev_toggle_maintenance",
-        "dev_login_activate",        # any other dev endpoints you have
-        "dev_login",                 # ensure dev-login allowed
+        "dev_login_activate",
+        "login",
+        "logout",
     }
 
-    # allow specific endpoints by name (if request.endpoint is set)
-    endpoint = (request.endpoint or "").split(".")[-1]
+    endpoint = request.endpoint or ""
+
     if endpoint in whitelist_endpoints:
         return None
 
-    # allow dev sessions (you set session["dev"] in dev-login)
-    if session.get("dev") or session.get("user_id") == -1:
-        return None
-
-    # otherwise redirect to maintenance page (503)
     return redirect(url_for("maintenance"))
 
 
@@ -235,6 +260,8 @@ def login():
             else:
                 c.execute("SELECT * FROM users WHERE username = ?", (username,))
             user = c.fetchone()
+            print("DEBUG USER ROW:", dict(user) if user else None)
+
         finally:
             conn.close()
 
@@ -243,6 +270,7 @@ def login():
             if stored_pw and check_password_hash(stored_pw, password):
                 session["user_id"] = row_val(user, "id")
                 session["username"] = row_val(user, "username")
+                session["is_admin"] = row_val(user, "is_admin")
                 has_seen_tutorial = user["has_seen_tutorial"] if "has_seen_tutorial" in user.keys() else False
                 if not has_seen_tutorial:
                     return redirect(url_for("tutorial"))
@@ -267,6 +295,7 @@ def index():
         return redirect(url_for("login"))
 
     print("Session:", dict(session))
+    
 
     conn = get_connection()
     c = conn.cursor()
@@ -419,8 +448,8 @@ def manage_classes():
     return render_template("classes.html", classes=links)
 
 
-@app.route("/delete_class/<int:id>", methods=["POST", "GET"])
-def delete_class(id):
+@app.route("/delete_class_link/<int:id>", methods=["POST", "GET"])
+def delete_class_link(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
     conn = get_connection()
@@ -665,6 +694,66 @@ def dev_toggle_maintenance():
     set_maintenance(new_state)
     flash(f"Maintenance mode {'ENABLED' if new_state else 'DISABLED'}.", "info")
     return redirect(url_for("dev_dashboard"))
+
+@app.route("/my-classes")
+def my_classes():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT id, name, description, color
+        FROM classes
+        WHERE user_id = ?
+        ORDER BY name ASC
+    """, (session["user_id"],))
+
+    classes = c.fetchall()
+    conn.close()
+
+    return render_template("my_classes.html", classes=classes)
+
+@app.route("/add-class", methods=["POST"])
+def add_class():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    name = request.form.get("name")
+    description = request.form.get("description")
+    color = request.form.get("color") or "#3b82f6"  # default blue
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        INSERT INTO classes (user_id, name, description, color)
+        VALUES (?, ?, ?, ?)
+    """, (session["user_id"], name, description, color))
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/my-classes")
+
+@app.route("/delete-class/<int:class_id>", methods=["POST"])
+def delete_class(class_id):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        DELETE FROM classes
+        WHERE id = ? AND user_id = ?
+    """, (class_id, session["user_id"]))
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/my-classes")
 
 
 if __name__ == "__main__":

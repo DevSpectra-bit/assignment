@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Classes</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-white shadow-md py-4 px-6 flex justify-between items-center">
+    <h1 class="text-3xl font-bold text-indigo-600">My Classes</h1>
+
+    <a href="/" class="text-indigo-600 font-medium hover:underline">
+      Back to Assignments
+    </a>
+  </header>
+
+  <main class="flex-1 p-6 max-w-5xl mx-auto">
+
+    <!-- Add Class Form -->
+    <section class="bg-white rounded-xl shadow-md p-6 mb-8">
+      <h2 class="text-xl font-semibold text-indigo-600 mb-4">Add a Class</h2>
+
+      <form action="/add-class" method="POST" class="grid md:grid-cols-2 gap-4">
+
+        <input type="text" name="name" placeholder="Class Name" required
+               class="border border-gray-300 rounded-lg p-2">
+
+        <textarea name="description" placeholder="Description (optional)"
+                  class="border border-gray-300 rounded-lg p-2 md:col-span-2"></textarea>
+
+        <label class="text-gray-600 font-medium">Class Color:</label>
+        <input type="color" name="color" value="#3b82f6"
+               class="w-16 h-10 border rounded">
+
+        <button type="submit"
+                class="col-span-2 bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 transition">
+          Add Class
+        </button>
+      </form>
+    </section>
+
+    <!-- Class List -->
+    <section>
+      <h2 class="text-2xl font-semibold text-gray-700 mb-4">Your Classes</h2>
+
+      {% if classes %}
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        {% for c in classes %}
+        <div class="p-5 rounded-xl shadow-md bg-white border relative"
+             style="border-left: 6px solid '{{ c[3] }}';">
+
+          <h3 class="text-lg font-semibold text-gray-800 mb-1">{{ c[1] }}</h3>
+
+          {% if c[2] %}
+          <p class="text-sm text-gray-600 mb-3">{{ c[2] }}</p>
+          {% endif %}
+
+          <form action="/delete-class/{{ c[0] }}" method="POST">
+            <button class="text-red-600 font-medium hover:underline text-sm">
+              Delete
+            </button>
+          </form>
+
+        </div>
+        {% endfor %}
+
+      </div>
+      {% else %}
+      <p class="text-center text-gray-500 italic mt-8">
+        No classes yet — add one above!
+      </p>
+      {% endif %}
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="text-center text-sm text-gray-500 py-4 mt-auto">
+    Made with ❤️ using Flask + Tailwind
+  </footer>
+
+</body>
+</html>

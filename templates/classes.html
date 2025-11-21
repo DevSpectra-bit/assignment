@@ -41,7 +41,7 @@
             <a href="{{ c.link }}" target="_blank" class="text-indigo-600 hover:underline text-sm break-all">{{ c.link }}</a>
 
             <div class="mt-4 flex justify-end">
-              <a href="{{ url_for('delete_class', id=c.id) }}" class="text-red-500 text-sm font-medium hover:underline">Delete</a>
+              <a href="{{ url_for('delete_class_link', id=c.id) }}" class="text-red-500 text-sm font-medium hover:underline">Delete</a>
             </div>
           </div>
           {% endfor %}
