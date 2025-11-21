@@ -271,10 +271,11 @@ def index():
     conn = get_connection()
     c = conn.cursor()
     try:
+        # Order by submitted ASC first (unsubmitted=0/False first), then due_date
         if IS_POSTGRES:
-            c.execute("SELECT * FROM assignments WHERE user_id = %s ORDER BY due_date ASC", (session["user_id"],))
+            c.execute("SELECT * FROM assignments WHERE user_id = %s ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         else:
-            c.execute("SELECT * FROM assignments WHERE user_id = ? ORDER BY due_date ASC", (session["user_id"],))
+            c.execute("SELECT * FROM assignments WHERE user_id = ? ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         rows = c.fetchall()
     finally:
         conn.close()
@@ -282,7 +283,8 @@ def index():
     today = datetime.now().date()
     annotated = []
     for r in rows:
-        row = dict(r) if IS_POSTGRES else dict(r)  # both support dict() for consistent access
+        # dict(r) should work for both RealDictCursor and sqlite3.Row
+        row = dict(r) if not IS_POSTGRES else dict(r)
         # validate due_date format
         try:
             due_date_val = row["due_date"]
@@ -290,16 +292,24 @@ def index():
                 due_date = datetime.strptime(due_date_val.split(" ")[0], "%Y-%m-%d").date()
             else:
                 due_date = due_date_val  # already a date object
-
         except Exception:
             continue
         days_left = (due_date - today).days
+
+        # normalize submitted value to Python bool (handles 0/1 or False/True)
+        submitted_val = row.get("submitted", False)
+        # if sqlite returns 0/1 as int or string, convert safely:
+        try:
+            submitted_bool = bool(int(submitted_val)) if submitted_val in (0, 1, "0", "1") else bool(submitted_val)
+        except Exception:
+            submitted_bool = bool(submitted_val)
+
         annotated.append({
             **row,
             "is_past_due": days_left < 0,
             "is_due_today": days_left == 0,
             "is_due_tomorrow": days_left == 1,
-            "submitted": row.get("submitted", False)
+            "submitted": submitted_bool
         })
 
     return render_template("index.html", assignments=annotated)
