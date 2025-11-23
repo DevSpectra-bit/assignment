@@ -14,7 +14,43 @@ load_dotenv()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-app.config.from_object("config.Config")
+try:
+    # Prefer loading config.py if present (keeps backwards compatibility)
+    import config
+    app.config.from_object("config.Config")
+except ModuleNotFoundError:
+    # No config.py present; ensure FEATURE_FLAGS key exists so the
+    # rest of the application can rely on it. Persisted flags will
+    # be loaded by `load_feature_flags()` below.
+    app.config["FEATURE_FLAGS"] = {}
+
+# Persisted feature flags file (keeps changes across restarts)
+FEATURE_FLAGS_FILE = "feature_flags.json"
+
+def load_feature_flags():
+    """Load feature flags from JSON file and merge into app config."""
+    try:
+        if os.path.exists(FEATURE_FLAGS_FILE):
+            with open(FEATURE_FLAGS_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    # replace entire FEATURE_FLAGS mapping with persisted values
+                    app.config["FEATURE_FLAGS"] = data
+    except Exception:
+        # ignore errors and keep defaults from config.py
+        pass
+
+def save_feature_flags():
+    """Write current feature flags to JSON file."""
+    try:
+        with open(FEATURE_FLAGS_FILE, "w") as f:
+            json.dump(app.config.get("FEATURE_FLAGS", {}), f, indent=2)
+    except Exception:
+        # best-effort only; failures shouldn't break the app
+        pass
+
+# override defaults with persisted flags (if any)
+load_feature_flags()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
@@ -213,6 +249,9 @@ def check_for_maintenance():
 def register():
     if "user_id" in session:
         return redirect(url_for("index"))
+    
+    if not app.config["FEATURE_FLAGS"]["register"]:
+        return render_template("disabled.html"), 403
 
     if request.method == "POST":
         username = request.form["username"].strip().lower()
@@ -244,6 +283,9 @@ def register():
 def login():
     if "user_id" in session:
         return redirect(url_for("index"))
+    
+    if not app.config["FEATURE_FLAGS"]["login"]:
+        return render_template("disabled.html"), 403
 
     if request.method == "POST":
         username = request.form["username"].strip().lower()
@@ -415,6 +457,9 @@ def submit_assignment(id):
 def manage_classes():
     if "user_id" not in session:
         return redirect(url_for("login"))
+    
+    if not app.config["FEATURE_FLAGS"]["manage_classes"]:
+        return render_template("disabled.html"), 403
 
     conn = get_connection()
     c = conn.cursor()
@@ -501,9 +546,12 @@ def redirect_by_class(id):
 
 # --- EDIT ASSIGNMENT ---
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
-def edit(id):
+def edit_assignment(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
+    
+    if not app.config["FEATURE_FLAGS"]["edit_assignment"]:
+        return render_template("disabled.html"), 403
 
     conn = get_connection()
     c = conn.cursor()
@@ -616,7 +664,9 @@ def dev_dashboard():
         total_assignments=total_assignments,
         total_classes=total_classes,
         recent_users=recent_users,
-        maintenance_mode=get_maintenance()
+        maintenance_mode=get_maintenance(),
+        disabled_modal=session.pop("disabled_modal", None),
+        feature_keys=list(app.config.get("FEATURE_FLAGS", {}).keys())
     )
 
 
@@ -696,6 +746,9 @@ def my_classes():
     if "user_id" not in session:
         return redirect("/login")
 
+    if not app.config["FEATURE_FLAGS"]["classes_list"]:
+        return render_template("disabled.html"), 403
+
     conn = get_connection()
     c = conn.cursor()
 
@@ -737,6 +790,7 @@ def add_class():
 def delete_class(class_id):
     if "user_id" not in session:
         return redirect("/login")
+    
 
     conn = get_connection()
     c = conn.cursor()
@@ -755,6 +809,9 @@ def delete_class(class_id):
 def account():
     if "user_id" not in session:
         return redirect(url_for("login"))
+    
+    if not app.config["FEATURE_FLAGS"]["account"]:
+        return render_template("disabled.html"), 403
 
     conn = get_connection()
     c = conn.cursor()
@@ -775,6 +832,8 @@ def account():
 def change_password():
     if "user_id" not in session:
         return redirect(url_for("login"))
+    if not app.config["FEATURE_FLAGS"]["change_password"]:
+        return render_template("disabled.html"), 403
 
     user_id = session["user_id"]
 
@@ -825,10 +884,38 @@ def change_password():
 @app.route("/grade-tracker")
 def grade_tracker():
     if not app.config["FEATURE_FLAGS"]["grade_tracker"]:
-        return "This feature is currently disabled.", 403
+        return render_template("disabled.html"), 403
 
     return render_template("grade_tracker.html")
 
+@app.route("/dev-add-disabled-function", methods=["POST"])
+def dev_add_disabled_function():
+    if not session.get("dev") and session.get("user_id") != -1:
+        return redirect(url_for("logout"))
+
+    # Read submitted form values (function key, display name, and reason)
+    function_key = request.form.get("function_key", "grade_tracker").strip()
+    function_label = request.form.get("function_label", function_key).strip() or function_key
+    reason = request.form.get("reason", "Disabled by developer").strip() or "Disabled by developer"
+
+    # Safely update feature flag if it exists in config
+    try:
+        if function_key in app.config.get("FEATURE_FLAGS", {}):
+            app.config["FEATURE_FLAGS"][function_key] = False
+            # persist change so it survives restarts
+            save_feature_flags()
+            session["disabled_modal"] = {"function": function_label, "reason": reason}
+            # keep a lightweight flash for logs
+            flash(f"Disabled '{function_label}' for testing.", "info")
+        else:
+            # Unknown function key: set modal to communicate the failure
+            session["disabled_modal"] = {"function": function_label, "reason": f"Failed: unknown feature key '{function_key}'"}
+            flash(f"Could not disable '{function_label}': unknown feature key.", "error")
+    except Exception as e:
+        session["disabled_modal"] = {"function": function_label, "reason": f"Error: {str(e)}"}
+        flash(f"Error disabling '{function_label}'.", "error")
+
+    return redirect(url_for("dev_dashboard"))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

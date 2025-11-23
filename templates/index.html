@@ -122,7 +122,7 @@
               {% endif %}
 
               <div class="flex justify-between items-center">
-                <a href="{{ url_for('edit', id=a.id) }}" class="text-blue-600 font-medium hover:underline text-sm">Edit</a>
+                <a href="{{ url_for('edit_assignment', id=a.id) }}" class="text-blue-600 font-medium hover:underline text-sm">Edit</a>
                 <a href="{{ url_for('redirect_by_class', id=a.id) }}" target="_blank" class="text-indigo-600 font-medium hover:underline text-sm">Go to Class</a>
 
                 {% if not a.submitted %}

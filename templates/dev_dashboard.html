@@ -107,6 +107,42 @@
             text-align: center;
             margin-top: 25px;
         }
+
+        /* Modal styles */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 60;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 200ms ease;
+        }
+
+        .modal-backdrop.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .modal {
+            background: white;
+            width: 90%;
+            max-width: 640px;
+            border-radius: 12px;
+            padding: 22px 26px;
+            box-shadow: 0 12px 40px rgba(2,6,23,0.2);
+            text-align: left;
+        }
+
+        .modal h3 { margin: 0 0 8px 0; }
+        .modal .meta { color: #666; font-size: 14px; margin-bottom: 14px }
+        .modal .actions { text-align: right; margin-top: 18px }
+        .modal .btn { padding: 8px 12px; border-radius: 8px; border: none; cursor: pointer }
+        .modal .btn.primary { background: #007bff; color: white }
+        .modal .btn.ghost { background: transparent; border: 1px solid #e6e6e6 }
     </style>
 </head>
 <body>
@@ -134,24 +170,41 @@
             </div>
         </div>
 
-        <h2 style="margin-top:40px;">Recent User Logins</h2>
-        {% if recent_users %}
-        <table>
-            <tr>
-                <th>Username</th>
-                <th>Last Login</th>
-            </tr>
-            {% for u in recent_users %}
-            <tr>
-                <td>{{ u.username }}</td>
-                <td>{{ u.last_login }}</td>
-            </tr>
-            {% endfor %}
-        </table>
-        {% else %}
-        <p style="text-align:center; margin-top:10px;">No recent users found.</p>
-        {% endif %}
+        <br>
+        <form action="{{ url_for('dev_add_disabled_function') }}" method="post" style="display:inline;vertical-align:middle;">
+            {% if feature_keys %}
+            <label for="function_key" style="font-size:13px;margin-right:6px;color:#333;">Feature:</label>
+            <select id="function_key" name="function_key" style="padding:8px;border-radius:8px;border:1px solid #e6e6e6;margin-right:8px;">
+                {% for key in feature_keys %}
+                <option value="{{ key }}">{{ key.replace('_',' ').title() }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="function_key" placeholder="feature_key" value="grade_tracker" style="padding:8px;border-radius:8px;border:1px solid #000000;margin-right:8px;">
+            {% endif %}
 
+            <input id="function_label" name="function_label" placeholder="Display name (optional)" value="" style="padding:8px;border-radius:8px;border:1px solid #000000;margin-right:8px;min-width:160px;">
+            <input name="reason" placeholder="Reason (e.g. testing)" value="Testing / maintenance" style="padding:8px;border-radius:8px;border:1px solid #000000;margin-right:8px;width:260px;">
+            <button type="submit" class="button" style="background:#007bff;color:rgb(255, 255, 255);border:none;padding:10px 12px;border-radius:8px;">➕ Disable</button>
+        </form>
+
+        <script>
+            // auto-fill display name from selected key when empty
+            (function(){
+                const sel = document.getElementById('function_key');
+                const label = document.getElementById('function_label');
+                if(!sel) return;
+                function updateLabel(){
+                    if(label && !label.value){
+                        label.value = sel.options[sel.selectedIndex].text;
+                    }
+                }
+                sel.addEventListener('change', updateLabel);
+                // init
+                updateLabel();
+            })();
+        </script>
+        
         <a href="{{ url_for('dev_stats') }}" class="button">📈 View Class Insights</a>
         <br>
         <br>
@@ -172,5 +225,37 @@
             <a href="{{ url_for('logout') }}">← Back to Assignments</a>
         </div>
     </div>
+    
+    {% if disabled_modal %}
+    <div id="disabledModal" class="modal-backdrop show" role="dialog" aria-modal="true">
+        <div class="modal" role="document">
+            <h3 style="color:#e6a800">Feature Disabled</h3>
+            <div class="meta">The following feature has been disabled by developer action.</div>
+
+            <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                <div style="flex:1;min-width:200px;">
+                    <strong>Function</strong>
+                    <div style="margin-top:6px;padding:10px;background:#f7f9fc;border-radius:8px;border:1px solid #eef4ff;color:#0b2545;">{{ disabled_modal.function }}</div>
+                </div>
+
+                <div style="flex:2;min-width:220px;">
+                    <strong>Reason</strong>
+                    <div style="margin-top:6px;padding:10px;background:#f7f7f8;border-radius:8px;border:1px solid #eee;color:#333;">{{ disabled_modal.reason }}</div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn ghost" id="closeModal">Close</button>
+                <a href="{{ url_for('dev_dashboard') }}" class="btn primary" style="margin-left:8px;">OK</a>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('closeModal').addEventListener('click', function(e){
+            e.preventDefault();
+            document.getElementById('disabledModal').classList.remove('show');
+        });
+    </script>
+    {% endif %}
 </body>
 </html>

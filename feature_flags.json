@@ -1,0 +1,10 @@
+{
+  "grade_tracker": false,
+  "classes_list": false,
+  "register": true,
+  "login": true,
+  "manage_classes": true,
+  "edit_assignment": true,
+  "account": true,
+  "change_password": true
+}
