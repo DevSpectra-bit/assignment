@@ -856,8 +856,8 @@ def update_account_settings():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    # checkbox value will be 'on' when checked
-    dark = 1 if request.form.get("dark_mode") in ("1", "on", "true", "True") else 0
+    # Convert checkbox input to a real Python boolean
+    dark = request.form.get("dark_mode") in ("1", "on", "true", "True")
 
     conn = get_connection()
     c = conn.cursor()
@@ -865,13 +865,14 @@ def update_account_settings():
         if IS_POSTGRES:
             c.execute("UPDATE users SET dark_mode = %s WHERE id = %s", (dark, session["user_id"]))
         else:
-            c.execute("UPDATE users SET dark_mode = ? WHERE id = ?", (dark, session["user_id"]))
+            c.execute("UPDATE users SET dark_mode = ? WHERE id = ?", (int(dark), session["user_id"]))
         conn.commit()
     finally:
         conn.close()
 
     flash("Account settings updated.", "info")
     return redirect(url_for("account"))
+
 
 @app.route("/account")
 def account():
