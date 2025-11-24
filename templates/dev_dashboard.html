@@ -145,7 +145,7 @@
         .modal .btn.ghost { background: transparent; border: 1px solid #e6e6e6 }
     </style>
 </head>
-<body>
+<body class="{% if dark_mode %}bg-gray-900 text-gray-100{% else %}bg-gray-100 text-gray-900{% endif %}">
     <header>
         <h1>Developer Dashboard</h1>
         <div class="logout">

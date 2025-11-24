@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, current_app
 from datetime import datetime, date
 import os
 import psycopg2
@@ -14,43 +14,45 @@ load_dotenv()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+
+# try loading config.py if present
 try:
-    # Prefer loading config.py if present (keeps backwards compatibility)
-    import config
+    import config  # noqa: F401
     app.config.from_object("config.Config")
 except ModuleNotFoundError:
-    # No config.py present; ensure FEATURE_FLAGS key exists so the
-    # rest of the application can rely on it. Persisted flags will
-    # be loaded by `load_feature_flags()` below.
+    # ensure FEATURE_FLAGS exists
     app.config["FEATURE_FLAGS"] = {}
 
-# Persisted feature flags file (keeps changes across restarts)
+# persisted flags file
 FEATURE_FLAGS_FILE = "feature_flags.json"
 
 def load_feature_flags():
-    """Load feature flags from JSON file and merge into app config."""
+    """Load feature flags from JSON file and merge into app config FEATURE_FLAGS mapping."""
     try:
         if os.path.exists(FEATURE_FLAGS_FILE):
             with open(FEATURE_FLAGS_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    # replace entire FEATURE_FLAGS mapping with persisted values
-                    app.config["FEATURE_FLAGS"] = data
+                    # overwrite/merge persisted flags
+                    app.config["FEATURE_FLAGS"].update(data)
     except Exception:
-        # ignore errors and keep defaults from config.py
+        # ignore on failure (keep defaults)
         pass
 
 def save_feature_flags():
-    """Write current feature flags to JSON file."""
+    """Persist current feature flags mapping to disk."""
     try:
         with open(FEATURE_FLAGS_FILE, "w") as f:
             json.dump(app.config.get("FEATURE_FLAGS", {}), f, indent=2)
     except Exception:
-        # best-effort only; failures shouldn't break the app
         pass
 
-# override defaults with persisted flags (if any)
+# load persisted flags (if any)
 load_feature_flags()
+
+# helper to read a feature flag safely
+def feature_enabled(key: str, default: bool = True) -> bool:
+    return app.config.get("FEATURE_FLAGS", {}).get(key, default)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
@@ -67,14 +69,17 @@ def get_connection():
 
 
 def row_val(row, key):
-    """Get value from either dict-like (Postgres RealDict) or sqlite3.Row."""
+    """Get value from either dict-like (Postgres RealDict) or sqlite3.Row.
+    Returns None if missing."""
     if row is None:
         return None
     try:
         return row[key]
     except Exception:
-        # fallback: try attribute
-        return getattr(row, key, None)
+        try:
+            return getattr(row, key, None)
+        except Exception:
+            return None
 
 
 def execute_select(cursor, query, params=()):
@@ -103,12 +108,39 @@ def set_maintenance(value: bool):
     with open(MAINTENANCE_FILE, "w") as f:
         json.dump({"enabled": value}, f)
 
+
+@app.context_processor
+def inject_dark_mode():
+    """Make current user's dark mode preference available to templates as `dark_mode`.
+
+    Returns False if not logged in or on error.
+    """
+    dark = False
+    if session.get("user_id"):
+        conn = get_connection()
+        c = conn.cursor()
+        try:
+            if IS_POSTGRES:
+                c.execute("SELECT dark_mode FROM users WHERE id = %s", (session["user_id"],))
+            else:
+                c.execute("SELECT dark_mode FROM users WHERE id = ?", (session["user_id"],))
+            r = c.fetchone()
+            val = row_val(r, "dark_mode")
+            if val is not None:
+                try:
+                    dark = bool(int(val)) if str(val) in ("0", "1") else bool(val)
+                except Exception:
+                    dark = bool(val)
+        finally:
+            conn.close()
+    return {"dark_mode": dark}
+
 # --- DB setup ---
 def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # users
+    # users table (base columns)
     if IS_POSTGRES:
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -117,6 +149,10 @@ def init_db():
                 password TEXT NOT NULL
             );
         """)
+        # add extra columns safely
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN DEFAULT FALSE;")
     else:
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -125,17 +161,21 @@ def init_db():
                 password TEXT NOT NULL
             );
         """)
-    # Add this inside your init_db() function after creating the users table
-    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
-    else:
-        # SQLite doesn’t support IF NOT EXISTS for ALTER TABLE
+        # SQLite ALTER TABLE add columns (ignore if already exist)
         try:
             c.execute("ALTER TABLE users ADD COLUMN has_seen_tutorial INTEGER DEFAULT 0;")
         except sqlite3.OperationalError:
-            pass  # Column already exists
+            pass
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN dark_mode INTEGER DEFAULT 0;")
+        except sqlite3.OperationalError:
+            pass
 
-    # assignments
+    # assignments table
     if IS_POSTGRES:
         c.execute("""
             CREATE TABLE IF NOT EXISTS assignments (
@@ -144,7 +184,8 @@ def init_db():
                 title TEXT NOT NULL,
                 cl TEXT NOT NULL,
                 due_date TEXT NOT NULL,
-                notes TEXT
+                notes TEXT,
+                submitted BOOLEAN DEFAULT FALSE
             );
         """)
     else:
@@ -156,11 +197,12 @@ def init_db():
                 cl TEXT NOT NULL,
                 due_date TEXT NOT NULL,
                 notes TEXT,
+                submitted INTEGER DEFAULT 0,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
 
-    # class_links
+    # class_links (legacy per-user quick-links)
     if IS_POSTGRES:
         c.execute("""
             CREATE TABLE IF NOT EXISTS class_links (
@@ -180,15 +222,15 @@ def init_db():
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
-    # classes table (real class pages)
+
+    # classes table (the "real" classes used by grade tracker) - use class_name & link columns
     if IS_POSTGRES:
         c.execute("""
             CREATE TABLE IF NOT EXISTS classes (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                description TEXT,
-                color TEXT
+                class_name TEXT NOT NULL,
+                link TEXT
             );
         """)
     else:
@@ -196,28 +238,25 @@ def init_db():
             CREATE TABLE IF NOT EXISTS classes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
-                name TEXT NOT NULL,
-                description TEXT,
-                color TEXT,
+                class_name TEXT NOT NULL,
+                link TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
 
-
     conn.commit()
     conn.close()
 
-
 init_db()
-
 
 # put this BEFORE your route definitions
 @app.before_request
 def check_for_maintenance():
-
+    # if maintenance is not enabled, do nothing
     if not get_maintenance():
         return None
 
+    # allow access to static assets always
     if request.path.startswith("/static/"):
         return None
 
@@ -235,22 +274,20 @@ def check_for_maintenance():
         "logout",
     }
 
-    endpoint = request.endpoint or ""
-
+    endpoint = (request.endpoint or "").split(".")[-1]
     if endpoint in whitelist_endpoints:
         return None
 
     return redirect(url_for("maintenance"))
-
-
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if "user_id" in session:
         return redirect(url_for("index"))
-    
-    if not app.config["FEATURE_FLAGS"]["register"]:
+
+    # safe feature flag check (default True)
+    if not feature_enabled("register", default=True):
         return render_template("disabled.html"), 403
 
     if request.method == "POST":
@@ -272,7 +309,6 @@ def register():
             flash("✅ Account created — please log in.")
             return redirect(url_for("login"))
         except Exception:
-            # Could be duplicate username; keep message generic
             flash("Username already exists or error creating account.")
         finally:
             conn.close()
@@ -283,8 +319,8 @@ def register():
 def login():
     if "user_id" in session:
         return redirect(url_for("index"))
-    
-    if not app.config["FEATURE_FLAGS"]["login"]:
+
+    if not feature_enabled("login", default=True):
         return render_template("disabled.html"), 403
 
     if request.method == "POST":
@@ -294,12 +330,13 @@ def login():
         c = conn.cursor()
         try:
             if IS_POSTGRES:
-                c.execute("SELECT * FROM users WHERE username = %s", (username,))
+                c.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
             else:
-                c.execute("SELECT * FROM users WHERE username = ?", (username,))
+                # use LOWER for case-insensitive match
+                c.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
             user = c.fetchone()
-            print("DEBUG USER ROW:", dict(user) if user else None)
-
+            # print debug row as dict (works for sqlite3.Row and RealDictRow)
+            print("DEBUG USER ROW:", dict(user) if user is not None else None)
         finally:
             conn.close()
 
@@ -308,8 +345,15 @@ def login():
             if stored_pw and check_password_hash(stored_pw, password):
                 session["user_id"] = row_val(user, "id")
                 session["username"] = row_val(user, "username")
-                session["is_admin"] = row_val(user, "is_admin")
-                has_seen_tutorial = user["has_seen_tutorial"] if "has_seen_tutorial" in user.keys() else False
+                session["is_admin"] = row_val(user, "is_admin") or 0
+                # has_seen_tutorial may be stored as int/bool
+                has_seen_tutorial = row_val(user, "has_seen_tutorial") or False
+                # normalize to Python bool
+                try:
+                    has_seen_tutorial = bool(int(has_seen_tutorial)) if str(has_seen_tutorial) in ("0", "1") else bool(has_seen_tutorial)
+                except Exception:
+                    has_seen_tutorial = bool(has_seen_tutorial)
+
                 if not has_seen_tutorial:
                     return redirect(url_for("tutorial"))
                 else:
@@ -333,12 +377,10 @@ def index():
         return redirect(url_for("login"))
 
     print("Session:", dict(session))
-    
 
     conn = get_connection()
     c = conn.cursor()
     try:
-        # Order by submitted ASC first (unsubmitted=0/False first), then due_date
         if IS_POSTGRES:
             c.execute("SELECT * FROM assignments WHERE user_id = %s ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         else:
@@ -350,24 +392,25 @@ def index():
     today = datetime.now().date()
     annotated = []
     for r in rows:
-        # dict(r) should work for both RealDictCursor and sqlite3.Row
-        row = dict(r) if not IS_POSTGRES else dict(r)
+        # convert row to dict (works for both RealDictRow and sqlite3.Row)
+        try:
+            row = dict(r)
+        except Exception:
+            row = r
         # validate due_date format
         try:
-            due_date_val = row["due_date"]
+            due_date_val = row.get("due_date")
             if isinstance(due_date_val, str):
                 due_date = datetime.strptime(due_date_val.split(" ")[0], "%Y-%m-%d").date()
             else:
-                due_date = due_date_val  # already a date object
+                due_date = due_date_val
         except Exception:
             continue
         days_left = (due_date - today).days
 
-        # normalize submitted value to Python bool (handles 0/1 or False/True)
         submitted_val = row.get("submitted", False)
-        # if sqlite returns 0/1 as int or string, convert safely:
         try:
-            submitted_bool = bool(int(submitted_val)) if submitted_val in (0, 1, "0", "1") else bool(submitted_val)
+            submitted_bool = bool(int(submitted_val)) if str(submitted_val) in ("0", "1") else bool(submitted_val)
         except Exception:
             submitted_bool = bool(submitted_val)
 
@@ -457,8 +500,8 @@ def submit_assignment(id):
 def manage_classes():
     if "user_id" not in session:
         return redirect(url_for("login"))
-    
-    if not app.config["FEATURE_FLAGS"]["manage_classes"]:
+
+    if not feature_enabled("manage_classes", default=True):
         return render_template("disabled.html"), 403
 
     conn = get_connection()
@@ -526,7 +569,9 @@ def redirect_by_class(id):
             flash("Assignment not found.")
             return redirect(url_for("index"))
 
-        class_name = row_val(r, "cl").strip().lower()
+        class_name = row_val(r, "cl")
+        if class_name:
+            class_name = str(class_name).strip().lower()
 
         # find link for this user + class
         if IS_POSTGRES:
@@ -549,8 +594,8 @@ def redirect_by_class(id):
 def edit_assignment(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
-    
-    if not app.config["FEATURE_FLAGS"]["edit_assignment"]:
+
+    if not feature_enabled("edit_assignment", default=True):
         return render_template("disabled.html"), 403
 
     conn = get_connection()
@@ -564,7 +609,7 @@ def edit_assignment(id):
 
             if not title or not cl or not due_date:
                 flash("Title, class and due date are required.")
-                return redirect(url_for("edit", id=id))
+                return redirect(url_for("edit_assignment", id=id))
 
             if IS_POSTGRES:
                 c.execute("""
@@ -642,17 +687,17 @@ def dev_dashboard():
 
     try:
         c.execute("SELECT COUNT(*) AS total FROM users")
-        total_users = c.fetchone()["total"]
+        total_users = row_val(c.fetchone(), "total") or 0
 
         c.execute("SELECT COUNT(*) AS total FROM assignments")
-        total_assignments = c.fetchone()["total"]
+        total_assignments = row_val(c.fetchone(), "total") or 0
 
         c.execute("SELECT COUNT(*) AS total FROM class_links")
-        total_classes = c.fetchone()["total"]
+        total_classes = row_val(c.fetchone(), "total") or 0
 
         try:
             c.execute("SELECT username FROM users ORDER BY id DESC LIMIT 5")
-            recent_users = [row["username"] for row in c.fetchall()]
+            recent_users = [row_val(row, "username") for row in c.fetchall()]
         except Exception:
             recent_users = []
     finally:
@@ -746,17 +791,17 @@ def my_classes():
     if "user_id" not in session:
         return redirect("/login")
 
-    if not app.config["FEATURE_FLAGS"]["classes_list"]:
+    if not feature_enabled("classes_list", default=True):
         return render_template("disabled.html"), 403
 
     conn = get_connection()
     c = conn.cursor()
 
     c.execute("""
-        SELECT id, name, description, color
+        SELECT id, class_name as name, '' as description, '' as color
         FROM classes
         WHERE user_id = ?
-        ORDER BY name ASC
+        ORDER BY class_name ASC
     """, (session["user_id"],))
 
     classes = c.fetchall()
@@ -776,10 +821,11 @@ def add_class():
     conn = get_connection()
     c = conn.cursor()
 
+    # insert into classes table (class_name + link optional)
     c.execute("""
-        INSERT INTO classes (user_id, name, description, color)
-        VALUES (?, ?, ?, ?)
-    """, (session["user_id"], name, description, color))
+        INSERT INTO classes (user_id, class_name, link)
+        VALUES (?, ?, ?)
+    """, (session["user_id"], name, request.form.get("link", "")))
 
     conn.commit()
     conn.close()
@@ -790,7 +836,6 @@ def add_class():
 def delete_class(class_id):
     if "user_id" not in session:
         return redirect("/login")
-    
 
     conn = get_connection()
     c = conn.cursor()
@@ -805,12 +850,35 @@ def delete_class(class_id):
 
     return redirect("/my-classes")
 
+
+@app.route("/account/update_settings", methods=["POST"])
+def update_account_settings():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    # checkbox value will be 'on' when checked
+    dark = 1 if request.form.get("dark_mode") in ("1", "on", "true", "True") else 0
+
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            c.execute("UPDATE users SET dark_mode = %s WHERE id = %s", (dark, session["user_id"]))
+        else:
+            c.execute("UPDATE users SET dark_mode = ? WHERE id = ?", (dark, session["user_id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+    flash("Account settings updated.", "info")
+    return redirect(url_for("account"))
+
 @app.route("/account")
 def account():
     if "user_id" not in session:
         return redirect(url_for("login"))
-    
-    if not app.config["FEATURE_FLAGS"]["account"]:
+
+    if not feature_enabled("account", default=True):
         return render_template("disabled.html"), 403
 
     conn = get_connection()
@@ -818,13 +886,19 @@ def account():
 
     try:
         if IS_POSTGRES:
-            c.execute("SELECT id, username, has_seen_tutorial, is_admin FROM users WHERE id = %s", (session["user_id"],))
+            c.execute("SELECT id, username, has_seen_tutorial, is_admin, dark_mode FROM users WHERE id = %s", (session["user_id"],))
         else:
-            c.execute("SELECT id, username, has_seen_tutorial, is_admin FROM users WHERE id = ?", (session["user_id"],))
+            c.execute("SELECT id, username, has_seen_tutorial, is_admin, dark_mode FROM users WHERE id = ?", (session["user_id"],))
 
         user = c.fetchone()
     finally:
         conn.close()
+
+    # normalize to plain dict for templates
+    try:
+        user = dict(user) if user is not None else None
+    except Exception:
+        pass
 
     return render_template("account.html", user=user)
 
@@ -832,7 +906,7 @@ def account():
 def change_password():
     if "user_id" not in session:
         return redirect(url_for("login"))
-    if not app.config["FEATURE_FLAGS"]["change_password"]:
+    if not feature_enabled("change_password", default=True):
         return render_template("disabled.html"), 403
 
     user_id = session["user_id"]
@@ -854,12 +928,11 @@ def change_password():
                 c.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             else:
                 c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-
             user = c.fetchone()
         finally:
             conn.close()
 
-        if not user or not check_password_hash(user["password"], old_pw):
+        if not user or not check_password_hash(row_val(user, "password"), old_pw):
             flash("Incorrect current password.")
             return redirect(url_for("change_password"))
 
@@ -883,10 +956,25 @@ def change_password():
 
 @app.route("/grade-tracker")
 def grade_tracker():
-    if not app.config["FEATURE_FLAGS"]["grade_tracker"]:
+    if not session.get("user_id"):
+        return redirect("/login")
+
+    if not feature_enabled("grade_tracker", default=True):
         return render_template("disabled.html"), 403
 
-    return render_template("grade_tracker.html")
+    conn = get_connection()
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT id, class_name, link 
+        FROM class_links 
+        WHERE user_id = ?
+    """, (session["user_id"],))
+
+    classes = c.fetchall()
+    conn.close()
+
+    return render_template("grade_tracker.html", classes=classes)
 
 @app.route("/dev-add-disabled-function", methods=["POST"])
 def dev_add_disabled_function():
@@ -900,15 +988,13 @@ def dev_add_disabled_function():
 
     # Safely update feature flag if it exists in config
     try:
-        if function_key in app.config.get("FEATURE_FLAGS", {}):
-            app.config["FEATURE_FLAGS"][function_key] = False
-            # persist change so it survives restarts
+        flags = app.config.setdefault("FEATURE_FLAGS", {})
+        if function_key in flags:
+            flags[function_key] = False
             save_feature_flags()
             session["disabled_modal"] = {"function": function_label, "reason": reason}
-            # keep a lightweight flash for logs
             flash(f"Disabled '{function_label}' for testing.", "info")
         else:
-            # Unknown function key: set modal to communicate the failure
             session["disabled_modal"] = {"function": function_label, "reason": f"Failed: unknown feature key '{function_key}'"}
             flash(f"Could not disable '{function_label}': unknown feature key.", "error")
     except Exception as e:

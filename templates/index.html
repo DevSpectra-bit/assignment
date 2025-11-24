@@ -29,11 +29,11 @@
     .flask-submitted { animation: flash-submitted 1.2s infinite; }
   </style>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col">
+<body class="{% if dark_mode %}bg-gradient-to-br from-slate-900 to-gray-800 min-h-screen font-sans text-gray-100 flex flex-col{% else %}bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen font-sans text-gray-800 flex flex-col{% endif %}">
 
   <!-- Header -->
-  <header class="bg-white shadow-md py-4 px-6 flex justify-between items-center">
-    <h1 class="text-3xl font-bold text-indigo-600">Assignment Tracker</h1>
+  <header class="py-4 px-6 flex justify-between items-center shadow-md {% if dark_mode %}bg-gray-800{% else %}bg-white{% endif %}">
+    <h1 class="text-3xl font-bold {% if dark_mode %}text-indigo-300{% else %}text-indigo-600{% endif %}">Assignment Tracker</h1>
 
     {% if session.get("username") %}
     <div class="flex items-center gap-4">
@@ -42,38 +42,24 @@
       <div class="relative inline-block text-left">
         
         <button id="settingsButton" 
-                class="text-gray-600 hover:text-indigo-600 font-medium focus:outline-none">
+                class="font-medium focus:outline-none {% if dark_mode %}text-gray-200 hover:text-indigo-300{% else %}text-gray-600 hover:text-indigo-600{% endif %}">
           Settings ({{ session['username'] }})
         </button>
-
-        <div id="settingsMenu"
-            class="hidden absolute right-0 mt-2 w-44 bg-white border rounded-lg shadow-lg py-1 z-50">
+        <div id="settingsMenu" class="hidden absolute right-0 mt-2 w-48 rounded-lg shadow-lg py-1 z-50 {% if dark_mode %}bg-gray-800 border border-gray-700{% else %}bg-white border{% endif %}">
 
           <!-- ACCOUNT -->
-          <a href="/account" 
-            class="block px-4 py-2 hover:bg-gray-100">
-            Account Info
-          </a>
+          <a href="/account" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Account Info</a>
 
           <!-- MANAGE CLASSES -->
-          <a href="{{ url_for('manage_classes') }}" 
-            class="block px-4 py-2 hover:bg-gray-100">
-            Manage Classes
-          </a>
+          <a href="{{ url_for('manage_classes') }}" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Manage Classes</a>
 
           <!-- GRADE TRACKER -->
-          <a href="/grade-tracker" 
-            class="block px-4 py-2 hover:bg-gray-100">
-            Grade Tracker
-          </a>
+          <a href="/grade-tracker" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Grade Tracker</a>
 
-          <div class="border-t my-1"></div>
+          <div class="my-1 {% if dark_mode %}border-t border-gray-700{% else %}border-t{% endif %}"></div>
 
           <!-- LOGOUT -->
-          <a href="{{ url_for('logout') }}"
-            class="block px-4 py-2 text-red-600 hover:bg-gray-100">
-            Logout
-          </a>
+          <a href="{{ url_for('logout') }}" class="block px-4 py-2 {% if dark_mode %}text-red-400 hover:bg-gray-700{% else %}text-red-600 hover:bg-gray-100{% endif %}">Logout</a>
 
         </div>
       </div>

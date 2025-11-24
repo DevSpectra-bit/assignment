@@ -84,7 +84,7 @@
         }
     </style>
 </head>
-<body>
+<body class="{% if dark_mode %}bg-gray-900 text-gray-100{% else %}bg-gray-100 text-gray-900{% endif %}">
     <div class="login-box">
         <h1>Login</h1>
         <form action="{{ url_for('dev_login') }}" method="POST">

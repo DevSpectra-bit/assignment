@@ -6,9 +6,9 @@
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="bg-gray-100">
+<body class="{% if dark_mode %}bg-gray-900 text-gray-100{% else %}bg-gray-100 text-gray-900{% endif %}">
 
-  <div class="max-w-2xl mx-auto mt-10 bg-white p-6 rounded-xl shadow">
+  <div id="accountCard" class="max-w-2xl mx-auto mt-10 p-6 rounded-xl shadow {% if dark_mode %}bg-gray-800{% else %}bg-white{% endif %}">
 
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-2xl font-bold">Account Settings</h1>
@@ -42,14 +42,50 @@
       </div>
 
       <div class="pt-4 border-t">
-        <a href="/change-password"
-          class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition block text-center">
-          Change Password
-        </a>
+        <form action="{{ url_for('update_account_settings') }}" method="post" id="settingsForm" class="flex items-center justify-between gap-4">
+          <div>
+            <label for="dark_mode" class="font-medium">Dark Mode</label>
+            <p class="text-sm text-gray-400">Enable dark theme across the site.</p>
+          </div>
+          <div>
+            <input type="checkbox" id="dark_mode" name="dark_mode" value="1" {% if user.get('dark_mode') %}checked{% endif %} class="h-6 w-6">
+            <button type="submit" class="ml-4 bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition">Save</button>
+          </div>
+        </form>
+
+        <div class="mt-4">
+          <a href="/change-password"
+            class="bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 transition block text-center">
+            Change Password
+          </a>
+        </div>
       </div>
 
     </div>
 
   </div>
+</div>
+
+<script>
+  // Live preview for dark mode toggle
+  (function(){
+    const cb = document.getElementById('dark_mode');
+    const body = document.body;
+    const card = document.getElementById('accountCard');
+    if (!cb) return;
+    function apply(d){
+      if(d){
+        body.classList.remove('bg-gray-100','text-gray-900');
+        body.classList.add('bg-gray-900','text-gray-100');
+        if(card){ card.classList.remove('bg-white'); card.classList.add('bg-gray-800'); }
+      } else {
+        body.classList.remove('bg-gray-900','text-gray-100');
+        body.classList.add('bg-gray-100','text-gray-900');
+        if(card){ card.classList.remove('bg-gray-800'); card.classList.add('bg-white'); }
+      }
+    }
+    cb.addEventListener('change', function(){ apply(cb.checked); });
+  })();
+</script>
 </body>
 </html>
