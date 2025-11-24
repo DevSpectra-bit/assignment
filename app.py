@@ -965,11 +965,19 @@ def grade_tracker():
     conn = get_connection()
     c = conn.cursor()
 
-    c.execute("""
-        SELECT id, class_name, link 
-        FROM class_links 
-        WHERE user_id = ?
-    """, (session["user_id"],))
+    if IS_POSTGRES:
+        c.execute("""
+            SELECT id, class_name, link
+            FROM class_links
+            WHERE user_id = %s
+        """, (session["user_id"],))
+    else:
+        c.execute("""
+            SELECT id, class_name, link
+            FROM class_links
+            WHERE user_id = ?
+        """, (session["user_id"],))
+
 
     classes = c.fetchall()
     conn.close()
