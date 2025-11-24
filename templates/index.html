@@ -70,19 +70,57 @@
 
 
   <main class="flex-1 p-6">
-    <!-- Add Assignment Form -->
-    <section class="bg-white rounded-xl shadow-md p-6 mb-8 max-w-3xl mx-auto">
-      <h2 class="text-xl font-semibold text-indigo-600 mb-4">Add Assignment</h2>
-      <form action="{{ url_for('add') }}" method="POST" class="grid md:grid-cols-2 gap-4">
-        <input type="text" name="title" placeholder="Assignment title" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
-        <input type="text" name="class" placeholder="Class name (e.g., Math)" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
-        <input type="date" name="due_date" required class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
-        <input type="text" name="notes" placeholder="Notes (optional)" class="border border-gray-300 rounded-lg p-2 focus:ring focus:ring-indigo-200">
-        <button type="submit" class="col-span-2 bg-indigo-600 text-white font-semibold py-2 rounded-lg hover:bg-indigo-700 transition">
-          Add Assignment
-        </button>
+
+  <!-- Add Assignment Form -->
+  <section class="{% if dark_mode %}bg-gray-800 text-gray-100{% else %}bg-white text-gray-800{% endif %} rounded-xl shadow-md p-6 mb-8 max-w-3xl mx-auto">
+    
+    <h2 class="text-xl font-semibold mb-4 
+      {% if dark_mode %}text-indigo-300{% else %}text-indigo-600{% endif %}">
+      Add Assignment
+    </h2>
+
+    <form action="{{ url_for('add') }}" method="POST" class="grid md:grid-cols-2 gap-4">
+
+      <input type="text" name="title" placeholder="Assignment title" required
+        class="rounded-lg p-2 focus:ring focus:ring-indigo-300
+        {% if dark_mode %}
+          bg-gray-700 text-gray-100 border border-gray-600 placeholder-gray-400
+        {% else %}
+          bg-white text-gray-800 border border-gray-300 placeholder-gray-500
+        {% endif %}">
+
+      <input type="text" name="class" placeholder="Class name (e.g., Math)" required
+        class="rounded-lg p-2 focus:ring focus:ring-indigo-300
+        {% if dark_mode %}
+          bg-gray-700 text-gray-100 border border-gray-600 placeholder-gray-400
+        {% else %}
+          bg-white text-gray-800 border border-gray-300 placeholder-gray-500
+        {% endif %}">
+
+      <input type="date" name="due_date" required
+        class="rounded-lg p-2 focus:ring focus:ring-indigo-300
+        {% if dark_mode %}
+          bg-gray-700 text-gray-100 border border-gray-600
+        {% else %}
+          bg-white text-gray-800 border border-gray-300
+        {% endif %}">
+
+      <input type="text" name="notes" placeholder="Notes (optional)"
+        class="rounded-lg p-2 focus:ring focus:ring-indigo-300
+        {% if dark_mode %}
+          bg-gray-700 text-gray-100 border border-gray-600 placeholder-gray-400
+        {% else %}
+          bg-white text-gray-800 border border-gray-300 placeholder-gray-500
+        {% endif %}">
+
+      <button type="submit"
+        class="col-span-2 font-semibold py-2 rounded-lg transition
+        bg-indigo-600 text-white hover:bg-indigo-700">
+        Add Assignment
+      </button>
       </form>
     </section>
+
 
     <!-- Assignment List -->
     <section class="max-w-5xl mx-auto">
