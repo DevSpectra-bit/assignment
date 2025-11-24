@@ -1012,6 +1012,53 @@ def dev_add_disabled_function():
 
     return redirect(url_for("dev_dashboard"))
 
+@app.route("/grade-tracker/<int:class_id>")
+def grade_tracker_class(class_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    # First: get the class name from class_links
+    if IS_POSTGRES:
+        c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
+                  (class_id, session["user_id"]))
+    else:
+        c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
+                  (class_id, session["user_id"]))
+
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return "Class not found or unauthorized.", 404
+
+    class_name = row[0]
+
+    # Now get assignments for this class
+    if IS_POSTGRES:
+        c.execute("""
+            SELECT id, title, due_date, notes, submitted
+            FROM assignments
+            WHERE user_id = %s AND cl = %s
+            ORDER BY due_date ASC
+        """, (session["user_id"], class_name))
+    else:
+        c.execute("""
+            SELECT id, title, due_date, notes, submitted
+            FROM assignments
+            WHERE user_id = ? AND cl = ?
+            ORDER BY due_date ASC
+        """, (session["user_id"], class_name))
+
+    assignments = c.fetchall()
+    conn.close()
+
+    return render_template("grade_tracker_class.html",
+                           class_name=class_name,
+                           assignments=assignments)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
