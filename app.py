@@ -280,6 +280,7 @@ def check_for_maintenance():
 
     return redirect(url_for("maintenance"))
 
+
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -1033,7 +1034,7 @@ def grade_tracker_class(class_id):
         conn.close()
         return "Class not found or unauthorized.", 404
 
-    class_name = row[0]
+    class_name = row["class_name"]
 
     # Now get assignments for this class
     if IS_POSTGRES:
@@ -1061,4 +1062,4 @@ def grade_tracker_class(class_id):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
