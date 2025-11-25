@@ -982,9 +982,12 @@ def grade_tracker():
     if not session.get("user_id"):
         return redirect("/login")
 
-    if not feature_enabled("grade_tracker", default=True):
-        if not session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+    if not feature_enabled("change_password", default=True):
+        if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+            pass
+        else:
             return render_template("disabled.html"), 403
+
 
     conn = get_connection()
     c = conn.cursor()
