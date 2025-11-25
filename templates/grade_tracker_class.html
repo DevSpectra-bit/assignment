@@ -58,12 +58,24 @@
             </p>
 
             <!-- Notes -->
-            {% set notes = a.notes if a.notes is defined else a[5] %}
+            {% set notes = a.notes if a.get('notes') else a.get('notes') %}
             {% if notes %}
               <p class="mt-3 {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">
                 {{ notes }}
               </p>
             {% endif %}
+
+            <!-- Grade display (if present) -->
+            {% if a.percent is not none %}
+              <div class="mt-3 text-sm font-medium">
+                Grade: {{ a.grade_value }} / {{ a.out_of_value }} — <span class="font-semibold">{{ a.percent }}%</span>
+              </div>
+            {% elif a.grade_value is not none %}
+              <div class="mt-3 text-sm font-medium">
+                Grade recorded (raw): {{ a.grade_value }}
+              </div>
+            {% endif %}
+
 
             <!-- Add Grade Button (Bottom Section w/ Border) -->
             <div class="mt-6 pt-4 border-t {% if dark_mode %}border-gray-700{% else %}border-gray-300{% endif %}">

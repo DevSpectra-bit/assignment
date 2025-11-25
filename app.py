@@ -8,6 +8,9 @@ import sqlite3
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 import json
+from cryptography.fernet import Fernet
+
+
 
 # Load .env if available
 load_dotenv()
@@ -135,6 +138,61 @@ def inject_dark_mode():
             conn.close()
     return {"dark_mode": dark}
 
+# --- Grade Encryption Helpers ---
+
+def load_grade_key():
+    """Load or create encryption key for grades."""
+    key_file = "secret.key"
+    if os.path.exists(key_file):
+        with open(key_file, "rb") as f:
+            return f.read()
+    key = Fernet.generate_key()
+    with open(key_file, "wb") as f:
+        f.write(key)
+    return key
+
+GRADE_CIPHER = Fernet(load_grade_key())
+
+def encrypt_grade(value: float) -> bytes:
+    """Encrypt a float → bytes."""
+    return GRADE_CIPHER.encrypt(str(value).encode())
+
+def decrypt_grade(token: bytes) -> float:
+    """Decrypt bytes → float."""
+    return float(GRADE_CIPHER.decrypt(token).decode())
+
+# safe decrypt helper (handles sqlite memoryview, bytes, str, None)
+def decrypt_grade_safe(token):
+    """
+    Accepts token that may be bytes, memoryview, or str (base64) and returns float.
+    Returns None on failure or if token is falsy.
+    """
+    if not token:
+        return None
+
+    # If sqlite returns memoryview, convert to bytes
+    try:
+        if isinstance(token, memoryview):
+            token = bytes(token)
+    except NameError:
+        # memoryview may not be defined in some contexts - ignore
+        pass
+
+    # If token is str (accidentally stored), try encoding
+    if isinstance(token, str):
+        token_bytes = token.encode()
+    else:
+        token_bytes = token
+
+    try:
+        # Fernet.decrypt expects bytes
+        plain = GRADE_CIPHER.decrypt(token_bytes)
+        return float(plain.decode())
+    except Exception:
+        # If decryption fails, return None rather than crash
+        return None
+
+
 # --- DB setup ---
 def init_db():
     conn = get_connection()
@@ -240,6 +298,31 @@ def init_db():
                 user_id INTEGER,
                 class_name TEXT NOT NULL,
                 link TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+        """)
+
+    # grades table
+    if IS_POSTGRES:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS grades (
+                id SERIAL PRIMARY KEY,
+                assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                grade BYTEA NOT NULL,
+                out_of BYTEA NOT NULL
+
+            );
+        """)
+    else:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS grades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                assignment_id INTEGER,
+                user_id INTEGER,
+                grade BLOB NOT NULL,
+                out_of BLOB NOT NULL,
+                FOREIGN KEY(assignment_id) REFERENCES assignments(id),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
         """)
@@ -982,7 +1065,7 @@ def grade_tracker():
     if not session.get("user_id"):
         return redirect("/login")
 
-    if not feature_enabled("change_password", default=True):
+    if not feature_enabled("grade_tracker", default=True):
         if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
             pass
         else:
@@ -1047,51 +1130,193 @@ def grade_tracker_class(class_id):
     c = conn.cursor()
 
     # First: get the class name from class_links
-    if IS_POSTGRES:
-        c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
-                  (class_id, session["user_id"]))
-    else:
-        c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
-                  (class_id, session["user_id"]))
+    try:
+        if IS_POSTGRES:
+            c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
+                      (class_id, session["user_id"]))
+        else:
+            c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
+                      (class_id, session["user_id"]))
+        row = c.fetchone()
+        if not row:
+            return "Class not found or unauthorized.", 404
 
-    row = c.fetchone()
-    if not row:
+        class_name = row_val(row, "class_name") or row.get("class_name") if isinstance(row, dict) else None
+        if class_name is None:
+            # fallback for sqlite3.Row where row behaves like dict
+            try:
+                class_name = dict(row).get("class_name")
+            except Exception:
+                class_name = None
+
+        if class_name is None:
+            return "Class not found.", 404
+
+        # Normalize class_name (trim/lower) - use Python trimming for sqlite, add SQL TRIM/LOWER for Postgres
+        class_name_norm = str(class_name).strip()
+
+        # Now get assignments for this class
+        if IS_POSTGRES:
+            # use case-insensitive compare inside SQL for Postgres
+            c.execute("""
+                SELECT id, title, due_date, notes, submitted
+                FROM assignments
+                WHERE user_id = %s
+                AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+                ORDER BY due_date ASC
+            """, (session["user_id"], class_name_norm))
+            assignments_rows = c.fetchall()
+        else:
+            c.execute("""
+                SELECT id, title, due_date, notes, submitted
+                FROM assignments
+                WHERE user_id = ? AND TRIM(cl) = ?
+                ORDER BY due_date ASC
+            """, (session["user_id"], class_name_norm))
+            assignments_rows = c.fetchall()
+
+        # For each assignment, fetch latest grade (if any), decrypt and attach values
+        assignments = []
+        for ar in assignments_rows:
+            # normalize row to dict-like (works for RealDictCursor and sqlite3.Row)
+            try:
+                a = dict(ar)
+            except Exception:
+                # sqlite3.Row supports mapping interface too, but fallback:
+                a = {
+                    "id": ar[0],
+                    "title": ar[1],
+                    "due_date": ar[2],
+                    "notes": ar[3],
+                    "submitted": ar[4]
+                }
+
+            # fetch latest grade for this assignment (by id desc)
+            if IS_POSTGRES:
+                c.execute("""
+                    SELECT grade, out_of
+                    FROM grades
+                    WHERE assignment_id = %s AND user_id = %s
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (a["id"], session["user_id"]))
+            else:
+                c.execute("""
+                    SELECT grade, out_of
+                    FROM grades
+                    WHERE assignment_id = ? AND user_id = ?
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (a["id"], session["user_id"]))
+            grow = c.fetchone()
+
+            # decrypt if present
+            g_val = None
+            out_of_val = None
+            if grow:
+                # grab values robustly
+                try:
+                    g_token = row_val(grow, "grade") if isinstance(grow, dict) or hasattr(grow, "keys") else grow[0]
+                except Exception:
+                    g_token = grow[0] if len(grow) > 0 else None
+                try:
+                    out_token = row_val(grow, "out_of") if isinstance(grow, dict) or hasattr(grow, "keys") else grow[1]
+                except Exception:
+                    out_token = grow[1] if len(grow) > 1 else None
+
+                g_val = decrypt_grade_safe(g_token)
+                out_of_val = decrypt_grade_safe(out_token)
+
+            # compute fraction and percent if both present
+            fraction = None
+            percent = None
+            try:
+                if g_val is not None and out_of_val is not None and out_of_val != 0:
+                    fraction = g_val / out_of_val
+                    percent = round(fraction * 100, 2)
+            except Exception:
+                fraction = None
+                percent = None
+
+            # attach friendly keys for template
+            a["grade_value"] = g_val
+            a["out_of_value"] = out_of_val
+            a["fraction"] = fraction
+            a["percent"] = percent
+
+            assignments.append(a)
+    finally:
         conn.close()
-        return "Class not found or unauthorized.", 404
-
-    class_name = row["class_name"]
-
-    # Now get assignments for this class
-    if IS_POSTGRES:
-        c.execute("""
-            SELECT id, title, due_date, notes, submitted
-            FROM assignments
-            WHERE user_id = %s
-            AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
-            ORDER BY due_date ASC
-        """, (session["user_id"], class_name))
-    else:
-        c.execute("""
-            SELECT id, title, due_date, notes, submitted
-            FROM assignments
-            WHERE user_id = ? AND cl = ?
-            ORDER BY due_date ASC
-        """, (session["user_id"], class_name))
-
-    assignments = c.fetchall()
-    conn.close()
 
     return render_template("grade_tracker_class.html",
                            class_name=class_name,
                            assignments=assignments)
 
-@app.route("/add-grade/<int:assignment_id>")
+
+@app.route("/add-grade/<int:assignment_id>", methods=["GET", "POST"])
 def add_grade(assignment_id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    # You can fill this in later with the grade form
-    return render_template("disabled.html"), 403
+    conn = get_connection()
+    c = conn.cursor()
+
+    # Get assignment + class_id
+    if IS_POSTGRES:
+        c.execute("""
+            SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
+            FROM assignments a
+            JOIN class_links cl ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
+            WHERE a.id = %s AND a.user_id = %s
+        """, (assignment_id, session["user_id"]))
+    else:
+        c.execute("""
+            SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
+            FROM assignments a
+            JOIN class_links cl ON TRIM(a.cl) = TRIM(cl.class_name)
+            WHERE a.id = ? AND a.user_id = ?
+        """, (assignment_id, session["user_id"]))
+
+    assignment = c.fetchone()
+
+    if not assignment:
+        conn.close()
+        return "Assignment not found or unauthorized.", 404
+
+    if request.method == "POST":
+        grade = request.form.get("grade")
+        out_of = request.form.get("out_of")
+
+        if not grade or not out_of:
+            conn.close()
+            return "Missing fields", 400
+
+        # Encrypt first
+        encrypted_grade = encrypt_grade(float(grade))
+        encrypted_out_of = encrypt_grade(float(out_of))
+
+        # Add grade
+        if IS_POSTGRES:
+            c.execute("""
+                INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                VALUES (%s, %s, %s, %s)
+            """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+        else:
+            c.execute("""
+                INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                VALUES (?, ?, ?, ?)
+            """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+
+        conn.commit()
+
+        class_id = assignment["class_id"]
+        conn.close()
+
+        # Redirect back to the correct class page
+        return redirect(url_for("grade_tracker_class", class_id=class_id))
+
+    conn.close()
+    return render_template("add_grade.html", assignment=assignment)
 
 
 if __name__ == "__main__":
