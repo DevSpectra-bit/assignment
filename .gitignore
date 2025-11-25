@@ -1,3 +1,4 @@
 .env
 filename.py
 assignments.db
+secret.key
