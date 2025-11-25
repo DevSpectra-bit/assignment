@@ -1082,6 +1082,14 @@ def grade_tracker_class(class_id):
                            class_name=class_name,
                            assignments=assignments)
 
+@app.route("/add-grade/<int:assignment_id>")
+def add_grade(assignment_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    # You can fill this in later with the grade form
+    return render_template("disabled.html"), 403
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
