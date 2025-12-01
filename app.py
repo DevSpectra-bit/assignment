@@ -1250,43 +1250,35 @@ def grade_tracker_class(class_id):
     conn = get_connection()
     c = conn.cursor()
 
-    # First: get the class name from class_links
     try:
+        # --- GET CLASS NAME ---
         if IS_POSTGRES:
             c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
                       (class_id, session["user_id"]))
         else:
             c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
                       (class_id, session["user_id"]))
+
         row = c.fetchone()
         if not row:
             return "Class not found or unauthorized.", 404
 
-        class_name = row_val(row, "class_name") or row.get("class_name") if isinstance(row, dict) else None
-        if class_name is None:
-            # fallback for sqlite3.Row where row behaves like dict
-            try:
-                class_name = dict(row).get("class_name")
-            except Exception:
-                class_name = None
+        # Works for sqlite3.Row, PostgreSQL, dicts
+        try:
+            class_name = row["class_name"]
+        except Exception:
+            class_name = row[0]
 
-        if class_name is None:
-            return "Class not found.", 404
+        class_name_norm = class_name.strip()
 
-        # Normalize class_name (trim/lower) - use Python trimming for sqlite, add SQL TRIM/LOWER for Postgres
-        class_name_norm = str(class_name).strip()
-
-        # Now get assignments for this class
+        # --- GET ASSIGNMENTS FOR THIS CLASS ---
         if IS_POSTGRES:
-            # use case-insensitive compare inside SQL for Postgres
             c.execute("""
                 SELECT id, title, due_date, notes, submitted
                 FROM assignments
-                WHERE user_id = %s
-                AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+                WHERE user_id = %s AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
                 ORDER BY due_date ASC
             """, (session["user_id"], class_name_norm))
-            assignments_rows = c.fetchall()
         else:
             c.execute("""
                 SELECT id, title, due_date, notes, submitted
@@ -1294,28 +1286,30 @@ def grade_tracker_class(class_id):
                 WHERE user_id = ? AND TRIM(cl) = ?
                 ORDER BY due_date ASC
             """, (session["user_id"], class_name_norm))
-            assignments_rows = c.fetchall()
 
-        # For each assignment, fetch latest grade (if any), decrypt and attach values
+        assignment_rows = c.fetchall()
+
         assignments = []
-        for ar in assignments_rows:
-            # normalize row to dict-like (works for RealDictCursor and sqlite3.Row)
+        proficiency_scores = []
+        regular_scores = []
+
+        # --- PROCESS EACH ASSIGNMENT + GET LATEST GRADE ---
+        for ar in assignment_rows:
             try:
                 a = dict(ar)
             except Exception:
-                # sqlite3.Row supports mapping interface too, but fallback:
                 a = {
                     "id": ar[0],
                     "title": ar[1],
                     "due_date": ar[2],
                     "notes": ar[3],
-                    "submitted": ar[4]
+                    "submitted": ar[4],
                 }
 
-            # fetch latest grade for this assignment (by id desc)
+            # Get latest grade
             if IS_POSTGRES:
                 c.execute("""
-                    SELECT grade, out_of
+                    SELECT grade, out_of, proficiency
                     FROM grades
                     WHERE assignment_id = %s AND user_id = %s
                     ORDER BY id DESC
@@ -1323,55 +1317,80 @@ def grade_tracker_class(class_id):
                 """, (a["id"], session["user_id"]))
             else:
                 c.execute("""
-                    SELECT grade, out_of
+                    SELECT grade, out_of, proficiency
                     FROM grades
                     WHERE assignment_id = ? AND user_id = ?
                     ORDER BY id DESC
                     LIMIT 1
                 """, (a["id"], session["user_id"]))
-            grow = c.fetchone()
 
-            # decrypt if present
+            grade_row = c.fetchone()
+
             g_val = None
-            out_of_val = None
-            if grow:
-                # grab values robustly
+            out_val = None
+            prof_flag = 0
+
+            if grade_row:
                 try:
-                    g_token = row_val(grow, "grade") if isinstance(grow, dict) or hasattr(grow, "keys") else grow[0]
+                    g_token = grade_row["grade"]
+                    out_token = grade_row["out_of"]
+                    prof_flag = grade_row["proficiency"]
                 except Exception:
-                    g_token = grow[0] if len(grow) > 0 else None
-                try:
-                    out_token = row_val(grow, "out_of") if isinstance(grow, dict) or hasattr(grow, "keys") else grow[1]
-                except Exception:
-                    out_token = grow[1] if len(grow) > 1 else None
+                    g_token = grade_row[0]
+                    out_token = grade_row[1]
+                    prof_flag = grade_row[2]
 
                 g_val = decrypt_grade_safe(g_token)
-                out_of_val = decrypt_grade_safe(out_token)
+                out_val = decrypt_grade_safe(out_token)
 
-            # compute fraction and percent if both present
-            fraction = None
             percent = None
-            try:
-                if g_val is not None and out_of_val is not None and out_of_val != 0:
-                    fraction = g_val / out_of_val
-                    percent = round(fraction * 100, 2)
-            except Exception:
-                fraction = None
-                percent = None
+            if g_val is not None and out_val not in (None, 0):
+                percent = round((g_val / out_val) * 100, 2)
 
-            # attach friendly keys for template
+                # Track averages
+                if prof_flag == 1:
+                    proficiency_scores.append(percent)
+                else:
+                    regular_scores.append(percent)
+
+            # attach for template
             a["grade_value"] = g_val
-            a["out_of_value"] = out_of_val
-            a["fraction"] = fraction
+            a["out_of_value"] = out_val
             a["percent"] = percent
+            a["proficiency"] = prof_flag
 
             assignments.append(a)
+
+        # --- WEIGHTED CLASS GRADE ---
+        if proficiency_scores:
+            p_avg = sum(proficiency_scores) / len(proficiency_scores)
+        else:
+            p_avg = None
+
+        if regular_scores:
+            r_avg = sum(regular_scores) / len(regular_scores)
+        else:
+            r_avg = None
+
+        if p_avg is not None and r_avg is not None:
+            class_average = (p_avg * 0.90) + (r_avg * 0.10)
+        elif p_avg is not None:
+            class_average = p_avg
+        elif r_avg is not None:
+            class_average = r_avg
+        else:
+            class_average = None
+
     finally:
         conn.close()
 
-    return render_template("grade_tracker_class.html",
-                           class_name=class_name,
-                           assignments=assignments)
+    return render_template(
+        "grade_tracker_class.html",
+        class_name=class_name,
+        assignments=assignments,
+        class_average=class_average,
+    )
+
 
 
 @app.route("/add-grade/<int:assignment_id>", methods=["GET", "POST"])
