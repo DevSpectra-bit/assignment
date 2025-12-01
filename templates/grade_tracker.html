@@ -31,19 +31,22 @@
             <div class="p-5 {% if dark_mode %}bg-gray-700 border border-gray-600{% else %}bg-gray-50 border border-gray-200{% endif %} rounded-xl shadow-sm hover:shadow-md transition">
 
               <div class="flex justify-between items-center mb-2">
-                <h3 class="text-xl font-semibold">
-                  {{ cls.class_name if cls.class_name is defined else cls[1] }}
-                </h3>
+                <h3 class="text-xl font-semibold">{{ cls.class_name }}</h3>
+                {% if cls.average is not none %}
+                  <p class="text-lg font-semibold mt-4">Class Grade: {{ "%.2f"|format(cls.average) }}%</p>
+                {% else %}
+                  <p class="text-gray-500 mt-4">No graded assignments yet.</p>
+                {% endif %}
               </div>
 
-              <a href="{{ cls.link if cls.link is defined else cls[2] }}" 
+              <a href="{{ cls.link }}" 
                  target="_blank" 
                  class="font-medium underline {% if dark_mode %}text-indigo-300 hover:text-indigo-200{% else %}text-indigo-600 hover:text-indigo-800{% endif %}">
                 Open Schoology
               </a>
 
               <!-- NEW BUTTON -->
-              <a href="/grade-tracker/{{ cls.id if cls.id is defined else cls[0] }}"
+              <a href="/grade-tracker/{{ cls.id }}"
                  class="mt-4 block px-4 py-2 bg-indigo-600 text-white rounded-lg text-center font-medium hover:bg-indigo-700 transition">
                 View Assignments →
               </a>

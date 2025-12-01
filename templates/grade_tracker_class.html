@@ -58,7 +58,7 @@
             </p>
 
             <!-- Notes -->
-            {% set notes = a.notes if a.get('notes') else a.get('notes') %}
+            {% set notes = a.notes or '' %}
             {% if notes %}
               <p class="mt-3 {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">
                 {{ notes }}

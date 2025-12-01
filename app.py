@@ -363,6 +363,28 @@ def check_for_maintenance():
 
     return redirect(url_for("maintenance"))
 
+#@app.route("/make-me-admin")
+#def make_me_admin():
+    if not session.get("user_id"):
+        return "You must be logged in.", 403
+
+    user_id = session["user_id"]
+
+    conn = get_connection()
+    c = conn.cursor()
+
+    if IS_POSTGRES:
+        c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (user_id,))
+    else:
+        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    session["is_admin"] = 1  # update session without relog
+
+    return "You are now an admin."
+
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -1071,27 +1093,126 @@ def grade_tracker():
         else:
             return render_template("disabled.html"), 403
 
-
     conn = get_connection()
     c = conn.cursor()
 
-    if IS_POSTGRES:
-        c.execute("""
-            SELECT id, class_name, link
-            FROM class_links
-            WHERE user_id = %s
-        """, (session["user_id"],))
-    else:
-        c.execute("""
-            SELECT id, class_name, link
-            FROM class_links
-            WHERE user_id = ?
-        """, (session["user_id"],))
+    try:
+        # load all class links for this user
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT id, class_name, link
+                FROM class_links
+                WHERE user_id = %s
+                ORDER BY class_name ASC
+            """, (session["user_id"],))
+        else:
+            c.execute("""
+                SELECT id, class_name, link
+                FROM class_links
+                WHERE user_id = ?
+                ORDER BY class_name ASC
+            """, (session["user_id"],))
 
+        raw_classes = c.fetchall()
 
-    classes = c.fetchall()
-    conn.close()
+        classes = []
 
+        # small helper to coerce DB value into bytes for Fernet
+        def _to_bytes(val):
+            if val is None:
+                return None
+            # sqlite may return memoryview for BLOB
+            if isinstance(val, (bytes, bytearray)):
+                return bytes(val)
+            try:
+                # memoryview or similar
+                return bytes(val)
+            except Exception:
+                # fallback: string-encode
+                return str(val).encode()
+
+        for cr in raw_classes:
+            # row_val works for both sqlite3.Row and dict-like Postgres rows
+            class_id = row_val(cr, "id")
+            class_name = row_val(cr, "class_name")
+            link = row_val(cr, "link")
+
+            # get assignment ids that belong to this class for this user
+            if IS_POSTGRES:
+                c.execute("""
+                    SELECT id
+                    FROM assignments
+                    WHERE user_id = %s
+                      AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+                """, (session["user_id"], class_name))
+            else:
+                c.execute("""
+                    SELECT id
+                    FROM assignments
+                    WHERE user_id = ? AND TRIM(cl) = TRIM(?)
+                """, (session["user_id"], class_name))
+            assignment_rows = c.fetchall()
+            assignment_ids = [row_val(a, "id") for a in assignment_rows]
+
+            assignments_count = len(assignment_ids)
+            graded_count = 0
+            percentages = []
+
+            if assignment_ids:
+                # fetch grades for those assignments
+                if IS_POSTGRES:
+                    placeholders = ",".join(["%s"] * len(assignment_ids))
+                    sql = f"SELECT grade, out_of FROM grades WHERE user_id = %s AND assignment_id IN ({placeholders})"
+                    params = [session["user_id"]] + assignment_ids
+                    c.execute(sql, tuple(params))
+                else:
+                    placeholders = ",".join(["?"] * len(assignment_ids))
+                    sql = f"SELECT grade, out_of FROM grades WHERE user_id = ? AND assignment_id IN ({placeholders})"
+                    params = [session["user_id"]] + assignment_ids
+                    c.execute(sql, params)
+
+                grade_rows = c.fetchall()
+
+                for gr in grade_rows:
+                    enc_grade = row_val(gr, "grade")
+                    enc_out = row_val(gr, "out_of")
+
+                    # coerce to bytes
+                    g_bytes = _to_bytes(enc_grade)
+                    o_bytes = _to_bytes(enc_out)
+
+                    if not g_bytes or not o_bytes:
+                        continue
+
+                    try:
+                        # decrypt (decrypt_grade expects bytes and returns float)
+                        g_val = decrypt_grade(g_bytes)
+                        o_val = decrypt_grade(o_bytes)
+                        # guard divide-by-zero
+                        if o_val and o_val != 0:
+                            pct = (float(g_val) / float(o_val)) * 100.0
+                            percentages.append(pct)
+                            graded_count += 1
+                    except Exception:
+                        # skip corrupted/invalid rows
+                        continue
+
+            # compute average (rounded to 2 decimals) or None
+            class_average = round(sum(percentages) / len(percentages), 2) if percentages else None
+
+            classes.append({
+                "id": class_id,
+                "class_name": class_name,
+                "link": link,
+                "assignments_count": assignments_count,
+                "graded_count": graded_count,
+                "average": class_average
+            })
+
+    finally:
+        conn.close()
+
+    # pass classes list (with averages) to template
     return render_template("grade_tracker.html", classes=classes)
 
 @app.route("/dev-add-disabled-function", methods=["POST"])
