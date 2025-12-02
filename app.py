@@ -211,6 +211,7 @@ def init_db():
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;")
         c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN DEFAULT FALSE;")
+        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_update TEXT DEFAULT '';")
     else:
         c.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -232,7 +233,10 @@ def init_db():
             c.execute("ALTER TABLE users ADD COLUMN dark_mode INTEGER DEFAULT 0;")
         except sqlite3.OperationalError:
             pass
-
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN last_seen_update TEXT DEFAULT '';")
+        except sqlite3.OperationalError:
+            pass
     # assignments table
     if IS_POSTGRES:
         c.execute("""
@@ -363,27 +367,58 @@ def check_for_maintenance():
 
     return redirect(url_for("maintenance"))
 
-#@app.route("/make-me-admin")
-#def make_me_admin():
-    if not session.get("user_id"):
-        return "You must be logged in.", 403
+# --- Updates version helper ---
+UPDATES_VERSION = "2025.12.02"  # Change this string whenever updates.html changes
 
-    user_id = session["user_id"]
-
+def should_show_updates(user_id):
+    """Return True if user should see updates.html (hasn't seen current version)."""
     conn = get_connection()
     c = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            c.execute("SELECT last_seen_update FROM users WHERE id = %s", (user_id,))
+        else:
+            c.execute("SELECT last_seen_update FROM users WHERE id = ?", (user_id,))
+        row = c.fetchone()
+        last_seen = row_val(row, "last_seen_update") or ""
+        return last_seen != UPDATES_VERSION
+    finally:
+        conn.close()
 
-    if IS_POSTGRES:
-        c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (user_id,))
-    else:
-        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user_id,))
+def mark_updates_seen(user_id):
+    """Set user's last_seen_update to current version."""
+    conn = get_connection()
+    c = conn.cursor()
+    try:
+        if IS_POSTGRES:
+            c.execute("UPDATE users SET last_seen_update = %s WHERE id = %s", (UPDATES_VERSION, user_id))
+        else:
+            c.execute("UPDATE users SET last_seen_update = ? WHERE id = ?", (UPDATES_VERSION, user_id))
+        conn.commit()
+    finally:
+        conn.close()
 
-    conn.commit()
-    conn.close()
+#@app.route("/make-me-admin")
+#def make_me_admin():
+#    if not session.get("user_id"):
+#        return "You must be logged in.", 403
 
-    session["is_admin"] = 1  # update session without relog
+#    user_id = session["user_id"]
 
-    return "You are now an admin."
+#    conn = get_connection()
+#    c = conn.cursor()
+
+#    if IS_POSTGRES:
+#        c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (user_id,))
+#    else:
+#        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user_id,))
+
+#    conn.commit()
+#    conn.close()
+
+#    session["is_admin"] = 1  # update session without relog
+
+#    return "You are now an admin."
 
 
 # --- AUTH ---
@@ -489,6 +524,16 @@ def index():
         return redirect(url_for("login"))
 
     print("Session:", dict(session))
+
+    # Show updates.html if needed
+    show_updates = should_show_updates(session["user_id"])
+    if session.get("seen_updates_once"):
+        show_updates = False
+
+    if show_updates:
+        mark_updates_seen(session["user_id"])
+        session["seen_updates_once"] = True
+        return render_template("updates.html")
 
     conn = get_connection()
     c = conn.cursor()
