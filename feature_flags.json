@@ -6,5 +6,6 @@
   "manage_classes": true,
   "edit_assignment": true,
   "account": true,
-  "change_password": true
+  "change_password": true,
+  "submitted-view": true
 }

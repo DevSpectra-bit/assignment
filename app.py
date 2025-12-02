@@ -1458,6 +1458,41 @@ def add_grade(assignment_id):
     conn.close()
     return render_template("add_grade.html", assignment=assignment)
 
+@app.route("/submitted-assignments")
+def submitted_assignments():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    
+    if not feature_enabled("submitted-view", default=True):
+        if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+            pass
+        else:
+            return render_template("disabled.html"), 403
+        
+    conn = get_connection()
+    c = conn.cursor()
+
+    try:
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT *
+                FROM assignments
+                WHERE user_id = %s AND submitted = TRUE
+                ORDER BY due_date ASC
+            """, (session["user_id"],))
+        else:
+            c.execute("""
+                SELECT *
+                FROM assignments
+                WHERE user_id = ? AND submitted = 1
+                ORDER BY due_date ASC
+            """, (session["user_id"],))
+
+        assignments = c.fetchall()
+    finally:
+        conn.close()
+
+    return render_template("submitted_assignments.html", assignments=assignments)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
