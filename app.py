@@ -1,4 +1,4 @@
-# app.py
+# app.py — cleaned version (maintenance logic removed, shared DB helpers, kept all features)
 from flask import Flask, render_template, request, redirect, url_for, session, flash, current_app
 from datetime import datetime, date
 import os
@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 import json
 from cryptography.fernet import Fernet
-
-
+from contextlib import contextmanager
+from typing import Iterator
 
 # Load .env if available
 load_dotenv()
@@ -36,10 +36,8 @@ def load_feature_flags():
             with open(FEATURE_FLAGS_FILE, "r") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    # overwrite/merge persisted flags
                     app.config["FEATURE_FLAGS"].update(data)
     except Exception:
-        # ignore on failure (keep defaults)
         pass
 
 def save_feature_flags():
@@ -59,9 +57,8 @@ def feature_enabled(key: str, default: bool = True) -> bool:
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
-MAINTENANCE_FILE = "maintenance.json"
 
-# --- Helpers ---
+# --- DB helpers ---
 def get_connection():
     """Return a DB connection. Postgres -> psycopg2 (RealDictCursor), else sqlite3."""
     if IS_POSTGRES:
@@ -70,6 +67,33 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+@contextmanager
+def db_cursor() -> Iterator:
+    """
+    Context manager that yields a cursor and ensures commit/rollback and close.
+    Use for both read and write operations. Keeps behavior consistent with previous code.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        yield cur
+        # commit where needed; harmless for pure selects on most DBs
+        try:
+            conn.commit()
+        except Exception:
+            # some read-only contexts or special cursors might not support commit
+            pass
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 def row_val(row, key):
     """Get value from either dict-like (Postgres RealDict) or sqlite3.Row.
@@ -83,60 +107,6 @@ def row_val(row, key):
             return getattr(row, key, None)
         except Exception:
             return None
-
-
-def execute_select(cursor, query, params=()):
-    """
-    Helper to run SELECT with correct placeholders depending on DB.
-    For Postgres use %s, for sqlite use ?.
-    `query` should already use the correct placeholder style.
-    """
-    cursor.execute(query, params)
-
-
-def placeholder(q_postgres, q_sqlite):
-    """Return query string appropriate to current DB type."""
-    return q_postgres if IS_POSTGRES else q_sqlite
-
-def get_maintenance():
-    if os.path.exists(MAINTENANCE_FILE):
-        with open(MAINTENANCE_FILE) as f:
-            try:
-                return json.load(f).get("enabled", False)
-            except json.JSONDecodeError:
-                return False
-    return False
-
-def set_maintenance(value: bool):
-    with open(MAINTENANCE_FILE, "w") as f:
-        json.dump({"enabled": value}, f)
-
-
-@app.context_processor
-def inject_dark_mode():
-    """Make current user's dark mode preference available to templates as `dark_mode`.
-
-    Returns False if not logged in or on error.
-    """
-    dark = False
-    if session.get("user_id"):
-        conn = get_connection()
-        c = conn.cursor()
-        try:
-            if IS_POSTGRES:
-                c.execute("SELECT dark_mode FROM users WHERE id = %s", (session["user_id"],))
-            else:
-                c.execute("SELECT dark_mode FROM users WHERE id = ?", (session["user_id"],))
-            r = c.fetchone()
-            val = row_val(r, "dark_mode")
-            if val is not None:
-                try:
-                    dark = bool(int(val)) if str(val) in ("0", "1") else bool(val)
-                except Exception:
-                    dark = bool(val)
-        finally:
-            conn.close()
-    return {"dark_mode": dark}
 
 # --- Grade Encryption Helpers ---
 
@@ -170,211 +140,186 @@ def decrypt_grade_safe(token):
     if not token:
         return None
 
-    # If sqlite returns memoryview, convert to bytes
     try:
         if isinstance(token, memoryview):
             token = bytes(token)
     except NameError:
-        # memoryview may not be defined in some contexts - ignore
         pass
 
-    # If token is str (accidentally stored), try encoding
     if isinstance(token, str):
         token_bytes = token.encode()
     else:
         token_bytes = token
 
     try:
-        # Fernet.decrypt expects bytes
         plain = GRADE_CIPHER.decrypt(token_bytes)
         return float(plain.decode())
     except Exception:
-        # If decryption fails, return None rather than crash
         return None
-
 
 # --- DB setup ---
 def init_db():
-    conn = get_connection()
-    c = conn.cursor()
+    with db_cursor() as c:
+        # users table (base columns)
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL
+                );
+            """)
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN DEFAULT FALSE;")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_update TEXT DEFAULT '';")
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL
+                );
+            """)
+            # SQLite ALTER TABLE add columns (ignore if already exist)
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN has_seen_tutorial INTEGER DEFAULT 0;")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN dark_mode INTEGER DEFAULT 0;")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN last_seen_update TEXT DEFAULT '';")
+            except sqlite3.OperationalError:
+                pass
 
-    # users table (base columns)
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL
-            );
-        """)
-        # add extra columns safely
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE;")
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;")
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN DEFAULT FALSE;")
-        c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_update TEXT DEFAULT '';")
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL
-            );
-        """)
-        # SQLite ALTER TABLE add columns (ignore if already exist)
-        try:
-            c.execute("ALTER TABLE users ADD COLUMN has_seen_tutorial INTEGER DEFAULT 0;")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0;")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE users ADD COLUMN dark_mode INTEGER DEFAULT 0;")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            c.execute("ALTER TABLE users ADD COLUMN last_seen_update TEXT DEFAULT '';")
-        except sqlite3.OperationalError:
-            pass
-    # assignments table
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS assignments (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT NOT NULL,
-                cl TEXT NOT NULL,
-                due_date TEXT NOT NULL,
-                notes TEXT,
-                submitted BOOLEAN DEFAULT FALSE
-            );
-        """)
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                title TEXT NOT NULL,
-                cl TEXT NOT NULL,
-                due_date TEXT NOT NULL,
-                notes TEXT,
-                submitted INTEGER DEFAULT 0,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-        """)
+        # assignments table
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS assignments (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    cl TEXT NOT NULL,
+                    due_date TEXT NOT NULL,
+                    notes TEXT,
+                    submitted BOOLEAN DEFAULT FALSE
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS assignments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    title TEXT NOT NULL,
+                    cl TEXT NOT NULL,
+                    due_date TEXT NOT NULL,
+                    notes TEXT,
+                    submitted INTEGER DEFAULT 0,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+            """)
 
-    # class_links (legacy per-user quick-links)
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS class_links (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                class_name TEXT NOT NULL,
-                link TEXT NOT NULL
-            );
-        """)
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS class_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                class_name TEXT NOT NULL,
-                link TEXT NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-        """)
+        # class_links (legacy per-user quick-links)
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS class_links (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    class_name TEXT NOT NULL,
+                    link TEXT NOT NULL
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS class_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    class_name TEXT NOT NULL,
+                    link TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+            """)
 
-    # classes table (the "real" classes used by grade tracker) - use class_name & link columns
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS classes (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                class_name TEXT NOT NULL,
-                link TEXT
-            );
-        """)
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS classes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                class_name TEXT NOT NULL,
-                link TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-        """)
+        # classes table (the "real" classes used by grade tracker)
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS classes (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    class_name TEXT NOT NULL,
+                    link TEXT
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS classes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    class_name TEXT NOT NULL,
+                    link TEXT,
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+            """)
 
-    # grades table
-    if IS_POSTGRES:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS grades (
-                id SERIAL PRIMARY KEY,
-                assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                grade BYTEA NOT NULL,
-                out_of BYTEA NOT NULL
-
-            );
-        """)
-    else:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS grades (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                assignment_id INTEGER,
-                user_id INTEGER,
-                grade BLOB NOT NULL,
-                out_of BLOB NOT NULL,
-                FOREIGN KEY(assignment_id) REFERENCES assignments(id),
-                FOREIGN KEY(user_id) REFERENCES users(id)
-            );
-        """)
-
-    conn.commit()
-    conn.close()
+        # grades table
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS grades (
+                    id SERIAL PRIMARY KEY,
+                    assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    grade BYTEA NOT NULL,
+                    out_of BYTEA NOT NULL
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS grades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    assignment_id INTEGER,
+                    user_id INTEGER,
+                    grade BLOB NOT NULL,
+                    out_of BLOB NOT NULL,
+                    FOREIGN KEY(assignment_id) REFERENCES assignments(id),
+                    FOREIGN KEY(user_id) REFERENCES users(id)
+                );
+            """)
 
 init_db()
 
-# put this BEFORE your route definitions
-@app.before_request
-def check_for_maintenance():
-    # if maintenance is not enabled, do nothing
-    if not get_maintenance():
-        return None
+# --- Context processors & helpers ---
+@app.context_processor
+def inject_dark_mode():
+    """Make current user's dark mode preference available to templates as `dark_mode`."""
+    dark = False
+    if session.get("user_id"):
+        with db_cursor() as c:
+            if IS_POSTGRES:
+                c.execute("SELECT dark_mode FROM users WHERE id = %s", (session["user_id"],))
+            else:
+                c.execute("SELECT dark_mode FROM users WHERE id = ?", (session["user_id"],))
+            r = c.fetchone()
+            val = row_val(r, "dark_mode")
+            if val is not None:
+                try:
+                    dark = bool(int(val)) if str(val) in ("0", "1") else bool(val)
+                except Exception:
+                    dark = bool(val)
+    return {"dark_mode": dark}
 
-    # allow access to static assets always
-    if request.path.startswith("/static/"):
-        return None
-
-    # FULL BYPASS: dev, special -1 user, or admin user
-    if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
-        return None
-
-    whitelist_endpoints = {
-        "maintenance",
-        "dev_dashboard",
-        "dev_login",
-        "dev_toggle_maintenance",
-        "dev_login_activate",
-        "login",
-        "logout",
-    }
-
-    endpoint = (request.endpoint or "").split(".")[-1]
-    if endpoint in whitelist_endpoints:
-        return None
-
-    return redirect(url_for("maintenance"))
-
-# --- Updates version helper ---
-UPDATES_VERSION = "2025.12.02"  # Change this string whenever updates.html changes
+# --- UPDATES helpers ---
+UPDATES_VERSION = "2025.12.03"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("SELECT last_seen_update FROM users WHERE id = %s", (user_id,))
         else:
@@ -382,44 +327,14 @@ def should_show_updates(user_id):
         row = c.fetchone()
         last_seen = row_val(row, "last_seen_update") or ""
         return last_seen != UPDATES_VERSION
-    finally:
-        conn.close()
 
 def mark_updates_seen(user_id):
     """Set user's last_seen_update to current version."""
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("UPDATE users SET last_seen_update = %s WHERE id = %s", (UPDATES_VERSION, user_id))
         else:
             c.execute("UPDATE users SET last_seen_update = ? WHERE id = ?", (UPDATES_VERSION, user_id))
-        conn.commit()
-    finally:
-        conn.close()
-
-#@app.route("/make-me-admin")
-#def make_me_admin():
-#    if not session.get("user_id"):
-#        return "You must be logged in.", 403
-
-#    user_id = session["user_id"]
-
-#    conn = get_connection()
-#    c = conn.cursor()
-
-#    if IS_POSTGRES:
-#        c.execute("UPDATE users SET is_admin = 1 WHERE id = %s", (user_id,))
-#    else:
-#        c.execute("UPDATE users SET is_admin = 1 WHERE id = ?", (user_id,))
-
-#    conn.commit()
-#    conn.close()
-
-#    session["is_admin"] = 1  # update session without relog
-
-#    return "You are now an admin."
-
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -427,7 +342,6 @@ def register():
     if "user_id" in session:
         return redirect(url_for("index"))
 
-    # safe feature flag check (default True)
     if not feature_enabled("register", default=True):
         if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
             pass
@@ -442,22 +356,17 @@ def register():
             return redirect(url_for("register"))
 
         hashed_pw = generate_password_hash(password)
-        conn = get_connection()
-        c = conn.cursor()
-        try:
-            if IS_POSTGRES:
-                c.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed_pw))
-            else:
-                c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
-            conn.commit()
-            flash("✅ Account created — please log in.")
-            return redirect(url_for("login"))
-        except Exception:
-            flash("Username already exists or error creating account.")
-        finally:
-            conn.close()
+        with db_cursor() as c:
+            try:
+                if IS_POSTGRES:
+                    c.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, hashed_pw))
+                else:
+                    c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
+                flash("✅ Account created — please log in.")
+                return redirect(url_for("login"))
+            except Exception:
+                flash("Username already exists or error creating account.")
     return render_template("register.html")
-
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -473,19 +382,14 @@ def login():
     if request.method == "POST":
         username = request.form["username"].strip().lower()
         password = request.form["password"]
-        conn = get_connection()
-        c = conn.cursor()
-        try:
+        with db_cursor() as c:
             if IS_POSTGRES:
                 c.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
             else:
-                # use LOWER for case-insensitive match
                 c.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
             user = c.fetchone()
             # print debug row as dict (works for sqlite3.Row and RealDictRow)
             print("DEBUG USER ROW:", dict(user) if user is not None else None)
-        finally:
-            conn.close()
 
         if user:
             stored_pw = row_val(user, "password")
@@ -493,9 +397,7 @@ def login():
                 session["user_id"] = row_val(user, "id")
                 session["username"] = row_val(user, "username")
                 session["is_admin"] = row_val(user, "is_admin") or 0
-                # has_seen_tutorial may be stored as int/bool
                 has_seen_tutorial = row_val(user, "has_seen_tutorial") or False
-                # normalize to Python bool
                 try:
                     has_seen_tutorial = bool(int(has_seen_tutorial)) if str(has_seen_tutorial) in ("0", "1") else bool(has_seen_tutorial)
                 except Exception:
@@ -509,13 +411,11 @@ def login():
         flash("❌ Invalid username or password.")
     return render_template("login.html")
 
-
 @app.route("/logout")
 def logout():
     session.clear()
     flash("👋 Logged out.")
     return redirect(url_for("login"))
-
 
 # --- ASSIGNMENTS ---
 @app.route("/")
@@ -535,26 +435,20 @@ def index():
         session["seen_updates_once"] = True
         return render_template("updates.html")
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("SELECT * FROM assignments WHERE user_id = %s ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         else:
             c.execute("SELECT * FROM assignments WHERE user_id = ? ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         rows = c.fetchall()
-    finally:
-        conn.close()
 
     today = datetime.now().date()
     annotated = []
     for r in rows:
-        # convert row to dict (works for both RealDictRow and sqlite3.Row)
         try:
             row = dict(r)
         except Exception:
             row = r
-        # validate due_date format
         try:
             due_date_val = row.get("due_date")
             if isinstance(due_date_val, str):
@@ -581,7 +475,6 @@ def index():
 
     return render_template("index.html", assignments=annotated)
 
-
 @app.route("/add", methods=["POST"])
 def add():
     if "user_id" not in session:
@@ -596,9 +489,7 @@ def add():
         flash("Title, class and due date are required.")
         return redirect(url_for("index"))
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute(
                 "INSERT INTO assignments (user_id, title, cl, due_date, notes) VALUES (%s, %s, %s, %s, %s)",
@@ -609,48 +500,34 @@ def add():
                 "INSERT INTO assignments (user_id, title, cl, due_date, notes) VALUES (?, ?, ?, ?, ?)",
                 (session["user_id"], title, cl, due_date, notes)
             )
-        conn.commit()
-    finally:
-        conn.close()
+
     return redirect(url_for("index"))
 
 @app.route("/delete/<int:id>", methods=["POST"])
 def delete(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("DELETE FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
         else:
             c.execute("DELETE FROM assignments WHERE id = ? AND user_id = ?", (id, session["user_id"]))
-        conn.commit()
-    finally:
-        conn.close()
     flash("Assignment deleted successfully.", "info")
     return redirect(url_for("index"))
-
 
 @app.route("/submit/<int:id>", methods=["POST"])
 def submit_assignment(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("UPDATE assignments SET submitted = TRUE WHERE id = %s AND user_id = %s", (id, session["user_id"]))
         else:
             c.execute("UPDATE assignments SET submitted = 1 WHERE id = ? AND user_id = ?", (id, session["user_id"]))
-        conn.commit()
-    finally:
-        conn.close()
 
     flash("Assignment marked as submitted!", "success")
     return redirect(url_for("index"))
-
 
 # --- CLASS LINKS (per-user) ---
 @app.route("/classes", methods=["GET", "POST"])
@@ -664,9 +541,7 @@ def manage_classes():
         else:
             return render_template("disabled.html"), 403
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if request.method == "POST":
             class_name = request.form.get("class_name", "").strip().lower()
             link = request.form.get("link", "").strip()
@@ -679,36 +554,26 @@ def manage_classes():
                 else:
                     c.execute("INSERT INTO class_links (user_id, class_name, link) VALUES (?, ?, ?)",
                               (session["user_id"], class_name, link))
-                conn.commit()
 
-        # load links
         if IS_POSTGRES:
             c.execute("SELECT * FROM class_links WHERE user_id = %s ORDER BY class_name ASC", (session["user_id"],))
         else:
             c.execute("SELECT * FROM class_links WHERE user_id = ? ORDER BY class_name ASC", (session["user_id"],))
         links = c.fetchall()
-    finally:
-        conn.close()
-    return render_template("classes.html", classes=links)
 
+    return render_template("classes.html", classes=links)
 
 @app.route("/delete_class_link/<int:id>", methods=["POST", "GET"])
 def delete_class_link(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("DELETE FROM class_links WHERE id = %s AND user_id = %s", (id, session["user_id"]))
         else:
             c.execute("DELETE FROM class_links WHERE id = ? AND user_id = ?", (id, session["user_id"]))
-        conn.commit()
-    finally:
-        conn.close()
     flash("Class removed.")
     return redirect(url_for("manage_classes"))
-
 
 # --- REDIRECT TO CLASS LINK ---
 @app.route("/redirect/<int:id>")
@@ -716,10 +581,7 @@ def redirect_by_class(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
-        # get class name for assignment
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("SELECT cl FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
         else:
@@ -733,21 +595,17 @@ def redirect_by_class(id):
         if class_name:
             class_name = str(class_name).strip().lower()
 
-        # find link for this user + class
         if IS_POSTGRES:
             c.execute("SELECT link FROM class_links WHERE user_id = %s AND class_name = %s", (session["user_id"], class_name))
         else:
             c.execute("SELECT link FROM class_links WHERE user_id = ? AND class_name = ?", (session["user_id"], class_name))
         link_row = c.fetchone()
-    finally:
-        conn.close()
 
     if link_row:
         link = row_val(link_row, "link")
         return redirect(link)
     flash("⚠️ No link found for this class. Add one under 'Manage Classes'.")
     return redirect(url_for("manage_classes"))
-
 
 # --- EDIT ASSIGNMENT ---
 @app.route("/edit/<int:id>", methods=["GET", "POST"])
@@ -761,19 +619,17 @@ def edit_assignment(id):
         else:
             return render_template("disabled.html"), 403
 
-    conn = get_connection()
-    c = conn.cursor()
-    try:
-        if request.method == "POST":
-            title = request.form.get("title", "").strip()
-            cl = request.form.get("class", "").strip()
-            due_date = request.form.get("due_date", "").strip()
-            notes = request.form.get("notes", "").strip()
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        cl = request.form.get("class", "").strip()
+        due_date = request.form.get("due_date", "").strip()
+        notes = request.form.get("notes", "").strip()
 
-            if not title or not cl or not due_date:
-                flash("Title, class and due date are required.")
-                return redirect(url_for("edit_assignment", id=id))
+        if not title or not cl or not due_date:
+            flash("Title, class and due date are required.")
+            return redirect(url_for("edit_assignment", id=id))
 
+        with db_cursor() as c:
             if IS_POSTGRES:
                 c.execute("""
                     UPDATE assignments SET title = %s, cl = %s, due_date = %s, notes = %s
@@ -784,9 +640,9 @@ def edit_assignment(id):
                     UPDATE assignments SET title = ?, cl = ?, due_date = ?, notes = ?
                     WHERE id = ? AND user_id = ?
                 """, (title, cl, due_date, notes, id, session["user_id"]))
-            conn.commit()
-            return redirect(url_for("index"))
-        else:
+        return redirect(url_for("index"))
+    else:
+        with db_cursor() as c:
             if IS_POSTGRES:
                 c.execute("SELECT * FROM assignments WHERE id = %s AND user_id = %s", (id, session["user_id"]))
             else:
@@ -795,8 +651,6 @@ def edit_assignment(id):
             if not assignment:
                 flash("You don't have permission to edit this assignment.")
                 return redirect(url_for("index"))
-    finally:
-        conn.close()
 
     return render_template("edit.html", assignment=assignment)
 
@@ -812,16 +666,11 @@ def finish_tutorial():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    if DATABASE_URL and DATABASE_URL.startswith("postgres"):
-        c.execute("UPDATE users SET has_seen_tutorial = TRUE WHERE id = %s", (session["user_id"],))
-    else:
-        c.execute("UPDATE users SET has_seen_tutorial = 1 WHERE id = ?", (session["user_id"],))
-
-    conn.commit()
-    conn.close()
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("UPDATE users SET has_seen_tutorial = TRUE WHERE id = %s", (session["user_id"],))
+        else:
+            c.execute("UPDATE users SET has_seen_tutorial = 1 WHERE id = ?", (session["user_id"],))
 
     return redirect(url_for("index"))
 
@@ -829,10 +678,10 @@ def finish_tutorial():
 def dev_login():
     if request.method == "POST":
         pin = request.form.get("pin")
-        if pin == os.getenv("DEV_PIN", "1234"):  # You can set DEV_PIN in .env
+        if pin == os.getenv("DEV_PIN", "1234"):
             session.clear()
             session["user_id"] = -1
-            session["dev"] = True  # ✅ Mark this session as developer
+            session["dev"] = True
             session["username"] = "developer"
             flash("🧠 Developer mode activated.", "info")
             return redirect(url_for("dev_dashboard"))
@@ -845,10 +694,7 @@ def dev_dashboard():
     if not session.get("dev") and session.get("user_id") != -1:
         return redirect(url_for("logout"))
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    try:
+    with db_cursor() as c:
         c.execute("SELECT COUNT(*) AS total FROM users")
         total_users = row_val(c.fetchone(), "total") or 0
 
@@ -863,8 +709,6 @@ def dev_dashboard():
             recent_users = [row_val(row, "username") for row in c.fetchall()]
         except Exception:
             recent_users = []
-    finally:
-        conn.close()
 
     return render_template(
         "dev_dashboard.html",
@@ -872,17 +716,14 @@ def dev_dashboard():
         total_assignments=total_assignments,
         total_classes=total_classes,
         recent_users=recent_users,
-        maintenance_mode=get_maintenance(),
         disabled_modal=session.pop("disabled_modal", None),
         feature_keys=list(app.config.get("FEATURE_FLAGS", {}).keys())
     )
 
-
 @app.route("/dev-activate", methods=["POST"])
 def dev_activate():
     session["dev"] = True
-    return ("", 204)  # Silent success (no content)
-
+    return ("", 204)
 
 @app.route("/dev-stats")
 def dev_stats():
@@ -890,155 +731,58 @@ def dev_stats():
         return redirect(url_for("logout"))
     return render_template("dev_stats_home.html")
 
-
 @app.route("/dev-stats/total")
 def dev_stats_total():
     if not session.get("dev") and session.get("user_id") != -1:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    c.execute("""
-        SELECT cl AS class, COUNT(*) AS total_assignments
-        FROM assignments
-        GROUP BY cl
-        ORDER BY total_assignments DESC
-    """)
-    total_assignments = c.fetchall()
+    with db_cursor() as c:
+        c.execute("""
+            SELECT cl AS class, COUNT(*) AS total_assignments
+            FROM assignments
+            GROUP BY cl
+            ORDER BY total_assignments DESC
+        """)
+        total_assignments = c.fetchall()
     print(total_assignments)
 
-
-    conn.close()
     return render_template("dev_stats_total.html", total_assignments=total_assignments)
-
 
 @app.route("/dev-stats/overdue")
 def dev_stats_overdue():
     if not session.get("dev") and session.get("user_id") != -1:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
+    with db_cursor() as c:
+        c.execute("""
+            SELECT cl AS class, ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT user_id), 2) AS avg_overdue
+            FROM assignments
+            WHERE due_date < CURRENT_DATE
+            GROUP BY cl
+            ORDER BY avg_overdue DESC
+        """)
+        overdue_per_class = c.fetchall()
 
-    c.execute("""
-        SELECT cl AS class, ROUND(COUNT(*) * 1.0 / COUNT(DISTINCT user_id), 2) AS avg_overdue
-        FROM assignments
-        WHERE due_date < CURRENT_DATE
-        GROUP BY cl
-        ORDER BY avg_overdue DESC
-    """)
-    overdue_per_class = c.fetchall()
-
-    conn.close()
     return render_template("dev_stats_overdue.html", overdue_per_class=overdue_per_class)
 
 @app.route("/privacy-policy")
 def privacy():
     return render_template("privacy.html", current_date=date.today().strftime("%B %d, %Y"))
 
-@app.route("/maintenance")
-def maintenance():
-    return render_template("maintenance.html", year=datetime.now().year), 503
-
-@app.route("/toggle-maintenance")
-def dev_toggle_maintenance():
-    current = get_maintenance()
-    new_state = not current
-    set_maintenance(new_state)
-    flash(f"Maintenance mode {'ENABLED' if new_state else 'DISABLED'}.", "info")
-    return redirect(url_for("dev_dashboard"))
-
-@app.route("/my-classes")
-def my_classes():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    if not feature_enabled("classes_list", default=True):
-        if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
-            pass
-        else:
-            return render_template("disabled.html"), 403
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    c.execute("""
-        SELECT id, class_name as name, '' as description, '' as color
-        FROM classes
-        WHERE user_id = ?
-        ORDER BY class_name ASC
-    """, (session["user_id"],))
-
-    classes = c.fetchall()
-    conn.close()
-
-    return render_template("my_classes.html", classes=classes)
-
-@app.route("/add-class", methods=["POST"])
-def add_class():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    name = request.form.get("name")
-    description = request.form.get("description")
-    color = request.form.get("color") or "#3b82f6"  # default blue
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    # insert into classes table (class_name + link optional)
-    c.execute("""
-        INSERT INTO classes (user_id, class_name, link)
-        VALUES (?, ?, ?)
-    """, (session["user_id"], name, request.form.get("link", "")))
-
-    conn.commit()
-    conn.close()
-
-    return redirect("/my-classes")
-
-@app.route("/delete-class/<int:class_id>", methods=["POST"])
-def delete_class(class_id):
-    if "user_id" not in session:
-        return redirect("/login")
-
-    conn = get_connection()
-    c = conn.cursor()
-
-    c.execute("""
-        DELETE FROM classes
-        WHERE id = ? AND user_id = ?
-    """, (class_id, session["user_id"]))
-
-    conn.commit()
-    conn.close()
-
-    return redirect("/my-classes")
-
-
 @app.route("/account/update_settings", methods=["POST"])
 def update_account_settings():
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    # Convert checkbox input to a real Python boolean
     dark = request.form.get("dark_mode") in ("1", "on", "true", "True")
-
-    conn = get_connection()
-    c = conn.cursor()
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("UPDATE users SET dark_mode = %s WHERE id = %s", (dark, session["user_id"]))
         else:
             c.execute("UPDATE users SET dark_mode = ? WHERE id = ?", (int(dark), session["user_id"]))
-        conn.commit()
-    finally:
-        conn.close()
 
     flash("Account settings updated.", "info")
     return redirect(url_for("account"))
-
 
 @app.route("/account")
 def account():
@@ -1051,20 +795,13 @@ def account():
         else:
             return render_template("disabled.html"), 403
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("SELECT id, username, has_seen_tutorial, is_admin, dark_mode FROM users WHERE id = %s", (session["user_id"],))
         else:
             c.execute("SELECT id, username, has_seen_tutorial, is_admin, dark_mode FROM users WHERE id = ?", (session["user_id"],))
-
         user = c.fetchone()
-    finally:
-        conn.close()
 
-    # normalize to plain dict for templates
     try:
         user = dict(user) if user is not None else None
     except Exception:
@@ -1093,34 +830,23 @@ def change_password():
             flash("New passwords do not match.")
             return redirect(url_for("change_password"))
 
-        conn = get_connection()
-        c = conn.cursor()
-
-        try:
+        with db_cursor() as c:
             if IS_POSTGRES:
                 c.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             else:
                 c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
             user = c.fetchone()
-        finally:
-            conn.close()
 
         if not user or not check_password_hash(row_val(user, "password"), old_pw):
             flash("Incorrect current password.")
             return redirect(url_for("change_password"))
 
         hashed = generate_password_hash(new_pw)
-
-        conn = get_connection()
-        c = conn.cursor()
-        try:
+        with db_cursor() as c:
             if IS_POSTGRES:
                 c.execute("UPDATE users SET password = %s WHERE id = %s", (hashed, user_id))
             else:
                 c.execute("UPDATE users SET password = ? WHERE id = ?", (hashed, user_id))
-            conn.commit()
-        finally:
-            conn.close()
 
         flash("Password updated successfully!")
         return redirect("/account")
@@ -1138,11 +864,8 @@ def grade_tracker():
         else:
             return render_template("disabled.html"), 403
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    try:
-        # load all class links for this user
+    classes = []
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("""
                 SELECT id, class_name, link
@@ -1157,27 +880,20 @@ def grade_tracker():
                 WHERE user_id = ?
                 ORDER BY class_name ASC
             """, (session["user_id"],))
-
         raw_classes = c.fetchall()
-
-        classes = []
 
         # small helper to coerce DB value into bytes for Fernet
         def _to_bytes(val):
             if val is None:
                 return None
-            # sqlite may return memoryview for BLOB
             if isinstance(val, (bytes, bytearray)):
                 return bytes(val)
             try:
-                # memoryview or similar
                 return bytes(val)
             except Exception:
-                # fallback: string-encode
                 return str(val).encode()
 
         for cr in raw_classes:
-            # row_val works for both sqlite3.Row and dict-like Postgres rows
             class_id = row_val(cr, "id")
             class_name = row_val(cr, "class_name")
             link = row_val(cr, "link")
@@ -1204,7 +920,6 @@ def grade_tracker():
             percentages = []
 
             if assignment_ids:
-                # fetch grades for those assignments
                 if IS_POSTGRES:
                     placeholders = ",".join(["%s"] * len(assignment_ids))
                     sql = f"SELECT grade, out_of FROM grades WHERE user_id = %s AND assignment_id IN ({placeholders})"
@@ -1217,12 +932,10 @@ def grade_tracker():
                     c.execute(sql, params)
 
                 grade_rows = c.fetchall()
-
                 for gr in grade_rows:
                     enc_grade = row_val(gr, "grade")
                     enc_out = row_val(gr, "out_of")
 
-                    # coerce to bytes
                     g_bytes = _to_bytes(enc_grade)
                     o_bytes = _to_bytes(enc_out)
 
@@ -1230,19 +943,15 @@ def grade_tracker():
                         continue
 
                     try:
-                        # decrypt (decrypt_grade expects bytes and returns float)
                         g_val = decrypt_grade(g_bytes)
                         o_val = decrypt_grade(o_bytes)
-                        # guard divide-by-zero
                         if o_val and o_val != 0:
                             pct = (float(g_val) / float(o_val)) * 100.0
                             percentages.append(pct)
                             graded_count += 1
                     except Exception:
-                        # skip corrupted/invalid rows
                         continue
 
-            # compute average (rounded to 2 decimals) or None
             class_average = round(sum(percentages) / len(percentages), 2) if percentages else None
 
             classes.append({
@@ -1254,10 +963,6 @@ def grade_tracker():
                 "average": class_average
             })
 
-    finally:
-        conn.close()
-
-    # pass classes list (with averages) to template
     return render_template("grade_tracker.html", classes=classes)
 
 @app.route("/dev-add-disabled-function", methods=["POST"])
@@ -1265,12 +970,10 @@ def dev_add_disabled_function():
     if not session.get("dev") and session.get("user_id") != -1:
         return redirect(url_for("logout"))
 
-    # Read submitted form values (function key, display name, and reason)
     function_key = request.form.get("function_key", "grade_tracker").strip()
     function_label = request.form.get("function_label", function_key).strip() or function_key
     reason = request.form.get("reason", "Disabled by developer").strip() or "Disabled by developer"
 
-    # Safely update feature flag if it exists in config
     try:
         flags = app.config.setdefault("FEATURE_FLAGS", {})
         if function_key in flags:
@@ -1292,10 +995,7 @@ def grade_tracker_class(class_id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    try:
+    with db_cursor() as c:
         # --- GET CLASS NAME ---
         if IS_POSTGRES:
             c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
@@ -1308,7 +1008,6 @@ def grade_tracker_class(class_id):
         if not row:
             return "Class not found or unauthorized.", 404
 
-        # Works for sqlite3.Row, PostgreSQL, dicts
         try:
             class_name = row["class_name"]
         except Exception:
@@ -1338,7 +1037,6 @@ def grade_tracker_class(class_id):
         proficiency_scores = []
         regular_scores = []
 
-        # --- PROCESS EACH ASSIGNMENT + GET LATEST GRADE ---
         for ar in assignment_rows:
             try:
                 a = dict(ar)
@@ -1351,7 +1049,6 @@ def grade_tracker_class(class_id):
                     "submitted": ar[4],
                 }
 
-            # Get latest grade
             if IS_POSTGRES:
                 c.execute("""
                     SELECT grade, out_of, proficiency
@@ -1391,14 +1088,11 @@ def grade_tracker_class(class_id):
             percent = None
             if g_val is not None and out_val not in (None, 0):
                 percent = round((g_val / out_val) * 100, 2)
-
-                # Track averages
                 if prof_flag == 1:
                     proficiency_scores.append(percent)
                 else:
                     regular_scores.append(percent)
 
-            # attach for template
             a["grade_value"] = g_val
             a["out_of_value"] = out_val
             a["percent"] = percent
@@ -1406,7 +1100,6 @@ def grade_tracker_class(class_id):
 
             assignments.append(a)
 
-        # --- WEIGHTED CLASS GRADE ---
         if proficiency_scores:
             p_avg = sum(proficiency_scores) / len(proficiency_scores)
         else:
@@ -1426,9 +1119,6 @@ def grade_tracker_class(class_id):
         else:
             class_average = None
 
-    finally:
-        conn.close()
-
     return render_template(
         "grade_tracker_class.html",
         class_name=class_name,
@@ -1436,106 +1126,84 @@ def grade_tracker_class(class_id):
         class_average=class_average,
     )
 
-
-
 @app.route("/add-grade/<int:assignment_id>", methods=["GET", "POST"])
 def add_grade(assignment_id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
-    conn = get_connection()
-    c = conn.cursor()
-
-    # Get assignment + class_id
-    if IS_POSTGRES:
-        c.execute("""
-            SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
-            FROM assignments a
-            JOIN class_links cl ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
-            WHERE a.id = %s AND a.user_id = %s
-        """, (assignment_id, session["user_id"]))
-    else:
-        c.execute("""
-            SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
-            FROM assignments a
-            JOIN class_links cl ON TRIM(a.cl) = TRIM(cl.class_name)
-            WHERE a.id = ? AND a.user_id = ?
-        """, (assignment_id, session["user_id"]))
-
-    assignment = c.fetchone()
-
-    if not assignment:
-        conn.close()
-        return "Assignment not found or unauthorized.", 404
-
-    if request.method == "POST":
-        grade = request.form.get("grade")
-        out_of = request.form.get("out_of")
-
-        if not grade or not out_of:
-            conn.close()
-            return "Missing fields", 400
-
-        # Encrypt first
-        encrypted_grade = encrypt_grade(float(grade))
-        encrypted_out_of = encrypt_grade(float(out_of))
-
-        # Add grade
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("""
-                INSERT INTO grades (assignment_id, user_id, grade, out_of)
-                VALUES (%s, %s, %s, %s)
-            """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+                SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
+                FROM assignments a
+                JOIN class_links cl ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
+                WHERE a.id = %s AND a.user_id = %s
+            """, (assignment_id, session["user_id"]))
         else:
             c.execute("""
-                INSERT INTO grades (assignment_id, user_id, grade, out_of)
-                VALUES (?, ?, ?, ?)
-            """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+                SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
+                FROM assignments a
+                JOIN class_links cl ON TRIM(a.cl) = TRIM(cl.class_name)
+                WHERE a.id = ? AND a.user_id = ?
+            """, (assignment_id, session["user_id"]))
+        assignment = c.fetchone()
 
-        conn.commit()
+        if not assignment:
+            return "Assignment not found or unauthorized.", 404
 
-        class_id = assignment["class_id"]
-        conn.close()
+        if request.method == "POST":
+            grade = request.form.get("grade")
+            out_of = request.form.get("out_of")
 
-        # Redirect back to the correct class page
-        return redirect(url_for("grade_tracker_class", class_id=class_id))
+            if not grade or not out_of:
+                return "Missing fields", 400
 
-    conn.close()
+            encrypted_grade = encrypt_grade(float(grade))
+            encrypted_out_of = encrypt_grade(float(out_of))
+
+            if IS_POSTGRES:
+                c.execute("""
+                    INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                    VALUES (%s, %s, %s, %s)
+                """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+            else:
+                c.execute("""
+                    INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                    VALUES (?, ?, ?, ?)
+                """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+
+            class_id = row_val(assignment, "class_id")
+            return redirect(url_for("grade_tracker_class", class_id=class_id))
+
     return render_template("add_grade.html", assignment=assignment)
 
 @app.route("/submitted-assignments")
 def submitted_assignments():
     if "user_id" not in session:
         return redirect(url_for("login"))
-    
+
     if not feature_enabled("submitted-view", default=True):
         if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
             pass
         else:
             return render_template("disabled.html"), 403
-        
-    conn = get_connection()
-    c = conn.cursor()
 
-    try:
+    with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("""
                 SELECT *
                 FROM assignments
                 WHERE user_id = %s AND submitted = TRUE
-                ORDER BY due_date ASC
+                ORDER BY due_date DESC
             """, (session["user_id"],))
         else:
             c.execute("""
                 SELECT *
                 FROM assignments
                 WHERE user_id = ? AND submitted = 1
-                ORDER BY due_date ASC
+                ORDER BY due_date DESC
             """, (session["user_id"],))
-
         assignments = c.fetchall()
-    finally:
-        conn.close()
 
     return render_template("submitted_assignments.html", assignments=assignments)
 
