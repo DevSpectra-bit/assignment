@@ -11,6 +11,8 @@ import json
 from cryptography.fernet import Fernet
 from contextlib import contextmanager
 from typing import Iterator
+from math import isfinite
+from flask import jsonify
 
 # Load .env if available
 load_dotenv()
@@ -181,7 +183,6 @@ def init_db():
                     password TEXT NOT NULL
                 );
             """)
-            # SQLite ALTER TABLE add columns (ignore if already exist)
             try:
                 c.execute("ALTER TABLE users ADD COLUMN has_seen_tutorial INTEGER DEFAULT 0;")
             except sqlite3.OperationalError:
@@ -247,7 +248,7 @@ def init_db():
                 );
             """)
 
-        # classes table (the "real" classes used by grade tracker)
+        # classes table (used by grade tracker)
         if IS_POSTGRES:
             c.execute("""
                 CREATE TABLE IF NOT EXISTS classes (
@@ -276,7 +277,8 @@ def init_db():
                     assignment_id INTEGER REFERENCES assignments(id) ON DELETE CASCADE,
                     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                     grade BYTEA NOT NULL,
-                    out_of BYTEA NOT NULL
+                    out_of BYTEA NOT NULL,
+                    proficiency INTEGER DEFAULT 0
                 );
             """)
         else:
@@ -287,12 +289,44 @@ def init_db():
                     user_id INTEGER,
                     grade BLOB NOT NULL,
                     out_of BLOB NOT NULL,
+                    proficiency INTEGER DEFAULT 0,
                     FOREIGN KEY(assignment_id) REFERENCES assignments(id),
                     FOREIGN KEY(user_id) REFERENCES users(id)
                 );
             """)
 
+        # goals table (NEW)
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS goals (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+                    title TEXT NOT NULL,
+                    goal_type TEXT NOT NULL,      -- "grade", "completion", etc.
+                    target_value REAL,
+                    deadline TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    class_id INTEGER,
+                    title TEXT NOT NULL,
+                    goal_type TEXT NOT NULL,
+                    target_value REAL,
+                    deadline TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(class_id) REFERENCES classes(id)
+                );
+            """)
+
 init_db()
+
 
 # --- Context processors & helpers ---
 @app.context_processor
@@ -315,7 +349,7 @@ def inject_dark_mode():
     return {"dark_mode": dark}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2025.12.03"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2025.12.05"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
@@ -335,6 +369,246 @@ def mark_updates_seen(user_id):
             c.execute("UPDATE users SET last_seen_update = %s WHERE id = %s", (UPDATES_VERSION, user_id))
         else:
             c.execute("UPDATE users SET last_seen_update = ? WHERE id = ?", (UPDATES_VERSION, user_id))
+
+# --- Other Helpers ---
+def get_user_goals(user_id):
+    """Return list of goal rows for user_id (raw DB rows)."""
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT * FROM goals WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
+        else:
+            c.execute("SELECT * FROM goals WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        return c.fetchall()
+
+def compute_class_average_for_user(class_id, user_id, cursor):
+    """
+    Compute current class average for a user.
+    Returns float (0..100) or None if no graded items.
+    Expects an open cursor; caller should handle Postgres/SQLite placeholders.
+    """
+    # Strategy:
+    # - Find latest grade per assignment for this user (same as grade_tracker_class does)
+    # - Compute average of percents
+    if IS_POSTGRES:
+        # fetch assignment ids for the class (case-insensitive compare)
+        cursor.execute("""
+            SELECT id
+            FROM assignments
+            WHERE user_id = %s AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+        """, (user_id, class_id))
+    else:
+        cursor.execute("""
+            SELECT id
+            FROM assignments
+            WHERE user_id = ? AND TRIM(cl) = ?
+        """, (user_id, class_id))
+    assignment_rows = cursor.fetchall()
+    assignment_ids = [row_val(r, "id") for r in assignment_rows]
+
+    if not assignment_ids:
+        return None
+
+    percentages = []
+    # For performance, fetch latest grade rows in a single query using IN (...)
+    if IS_POSTGRES:
+        placeholders = ",".join(["%s"] * len(assignment_ids))
+        sql = f"""
+            SELECT g.assignment_id, g.grade, g.out_of
+            FROM grades g
+            JOIN (
+                SELECT assignment_id, MAX(id) AS max_id
+                FROM grades
+                WHERE user_id = %s AND assignment_id IN ({placeholders})
+                GROUP BY assignment_id
+            ) lg ON lg.max_id = g.id
+            WHERE g.user_id = %s
+        """
+        params = [user_id] + assignment_ids + [user_id]
+        cursor.execute(sql, tuple(params))
+    else:
+        placeholders = ",".join(["?"] * len(assignment_ids))
+        sql = f"""
+            SELECT g.assignment_id, g.grade, g.out_of
+            FROM grades g
+            JOIN (
+                SELECT assignment_id, MAX(id) AS max_id
+                FROM grades
+                WHERE user_id = ? AND assignment_id IN ({placeholders})
+                GROUP BY assignment_id
+            ) lg ON lg.max_id = g.id
+            WHERE g.user_id = ?
+        """
+        params = [user_id] + assignment_ids + [user_id]
+        cursor.execute(sql, params)
+
+    grade_rows = cursor.fetchall()
+    for gr in grade_rows:
+        enc_grade = row_val(gr, "grade")
+        enc_out = row_val(gr, "out_of")
+        g_val = decrypt_grade_safe(enc_grade)
+        o_val = decrypt_grade_safe(enc_out)
+        if g_val is None or o_val in (None, 0):
+            continue
+        try:
+            pct = (float(g_val) / float(o_val)) * 100.0
+            percentages.append(pct)
+        except Exception:
+            continue
+
+    if not percentages:
+        return None
+    return round(sum(percentages) / len(percentages), 2)
+
+def get_class_name_from_links(class_id, user_id):
+    if not class_id:
+        return None
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
+                      (class_id, user_id))
+        else:
+            c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
+                      (class_id, user_id))
+        row = c.fetchone()
+        return row_val(row, "class_name") if row else None
+
+
+def compute_goal_progress(goal_row, user_id):
+    """
+    Given a DB row for a goal, compute progress.
+    """
+
+    # Normalize sqlite vs dict row
+    try:
+        goal = dict(goal_row)
+    except Exception:
+        goal = {
+            "id": row_val(goal_row, "id"),
+            "user_id": row_val(goal_row, "user_id"),
+            "class_id": row_val(goal_row, "class_id"),
+            "title": row_val(goal_row, "title"),
+            "goal_type": row_val(goal_row, "goal_type"),
+            "target_value": row_val(goal_row, "target_value"),
+            "deadline": row_val(goal_row, "deadline"),
+            "created_at": row_val(goal_row, "created_at"),
+        }
+
+    gtype = (goal.get("goal_type") or "").lower()
+    target = goal.get("target_value")
+
+    with db_cursor() as c:
+
+        # ---------------------------------------------------
+        # 1. GRADE GOAL (unchanged)
+        # ---------------------------------------------------
+        if gtype == "grade":
+            class_id = goal.get("class_id")
+            if not class_id:
+                return {
+                    "type": "grade",
+                    "progress": None,
+                    "target": target,
+                    "percent_of_target": None
+                }
+
+            avg = compute_class_average_for_user(class_id, user_id, c)
+            if avg is None:
+                return {
+                    "type": "grade",
+                    "progress": None,
+                    "target": target,
+                    "percent_of_target": None
+                }
+
+            percent = None
+            try:
+                if target:
+                    percent = round((avg / float(target)) * 100.0, 2)
+            except:
+                percent = None
+
+            return {
+                "type": "grade",
+                "progress": avg,
+                "target": target,
+                "percent_of_target": percent
+            }
+
+
+        # ---------------------------------------------------
+        # 2. COMPLETION GOAL (fixed version)
+        # ---------------------------------------------------
+        elif gtype == "completion":
+
+            class_id = goal.get("class_id")
+            class_name = get_class_name_from_links(class_id, user_id)
+
+            try:
+                target_num = float(target or 0)
+            except:
+                target_num = 0
+
+            # Count completed submissions
+            if class_name:
+                # Class-specific
+                if IS_POSTGRES:
+                    c.execute("""
+                        SELECT COUNT(*) AS done
+                        FROM assignments
+                        WHERE user_id = %s
+                          AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+                          AND submitted = TRUE
+                    """, (user_id, class_name))
+                else:
+                    c.execute("""
+                        SELECT COUNT(*) AS done
+                        FROM assignments
+                        WHERE user_id = ?
+                          AND TRIM(cl) = TRIM(?)
+                          AND submitted = 1
+                    """, (user_id, class_name))
+            else:
+                # All classes
+                if IS_POSTGRES:
+                    c.execute("""
+                        SELECT COUNT(*) AS done
+                        FROM assignments
+                        WHERE user_id = %s
+                          AND submitted = TRUE
+                    """, (user_id,))
+                else:
+                    c.execute("""
+                        SELECT COUNT(*) AS done
+                        FROM assignments
+                        WHERE user_id = ?
+                          AND submitted = 1
+                    """, (user_id,))
+
+            done = row_val(c.fetchone(), "done") or 0
+
+            # Calculate % of target
+            if target_num > 0:
+                percent = round((done / target_num) * 100.0, 2)
+                if percent > 100:
+                    percent = 100
+            else:
+                percent = 0
+
+            return {
+                "type": "completion",
+                "completed": done,
+                "target": target_num,
+                "percent_of_target": percent
+            }
+
+
+        # ---------------------------------------------------
+        # 3. Unknown type
+        # ---------------------------------------------------
+        else:
+            return {"type": gtype, "progress": None, "target": target}
+
+
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -996,13 +1270,22 @@ def grade_tracker_class(class_id):
         return redirect(url_for("login"))
 
     with db_cursor() as c:
-        # --- GET CLASS NAME ---
+
+        # ---------------------------------------------------------
+        # 1) Get CLASS NAME from class_links (correct table)
+        # ---------------------------------------------------------
         if IS_POSTGRES:
-            c.execute("SELECT class_name FROM class_links WHERE id = %s AND user_id = %s",
-                      (class_id, session["user_id"]))
+            c.execute("""
+                SELECT class_name 
+                FROM class_links 
+                WHERE id = %s AND user_id = %s
+            """, (class_id, session["user_id"]))
         else:
-            c.execute("SELECT class_name FROM class_links WHERE id = ? AND user_id = ?",
-                      (class_id, session["user_id"]))
+            c.execute("""
+                SELECT class_name 
+                FROM class_links 
+                WHERE id = ? AND user_id = ?
+            """, (class_id, session["user_id"]))
 
         row = c.fetchone()
         if not row:
@@ -1013,31 +1296,42 @@ def grade_tracker_class(class_id):
         except Exception:
             class_name = row[0]
 
-        class_name_norm = class_name.strip()
+        # Normalize class name for lookup
+        class_name_norm = class_name.strip().lower()
+        print("DEBUG class_name_norm:", class_name_norm)
 
-        # --- GET ASSIGNMENTS FOR THIS CLASS ---
+        # ---------------------------------------------------------
+        # 2) Get ASSIGNMENTS for this class
+        # ---------------------------------------------------------
         if IS_POSTGRES:
             c.execute("""
-                SELECT id, title, due_date, notes, submitted
+                SELECT id, title, due_date, notes, submitted, cl
                 FROM assignments
-                WHERE user_id = %s AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+                WHERE user_id = %s 
+                  AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
                 ORDER BY due_date ASC
             """, (session["user_id"], class_name_norm))
         else:
             c.execute("""
-                SELECT id, title, due_date, notes, submitted
+                SELECT id, title, due_date, notes, submitted, cl
                 FROM assignments
-                WHERE user_id = ? AND TRIM(cl) = ?
+                WHERE user_id = ?
+                  AND LOWER(TRIM(cl)) = LOWER(TRIM(?))
                 ORDER BY due_date ASC
             """, (session["user_id"], class_name_norm))
 
         assignment_rows = c.fetchall()
+        print("DEBUG assignment_rows count:", len(assignment_rows))
 
         assignments = []
         proficiency_scores = []
         regular_scores = []
 
+        # ---------------------------------------------------------
+        # 3) Load GRADES for each assignment
+        # ---------------------------------------------------------
         for ar in assignment_rows:
+            # normalize row → dict
             try:
                 a = dict(ar)
             except Exception:
@@ -1047,8 +1341,12 @@ def grade_tracker_class(class_id):
                     "due_date": ar[2],
                     "notes": ar[3],
                     "submitted": ar[4],
+                    "cl": ar[5] if len(ar) > 5 else None
                 }
 
+            print("DEBUG assignment cl repr:", repr(a.get("cl")))
+
+            # latest grade entry
             if IS_POSTGRES:
                 c.execute("""
                     SELECT grade, out_of, proficiency
@@ -1059,7 +1357,8 @@ def grade_tracker_class(class_id):
                 """, (a["id"], session["user_id"]))
             else:
                 c.execute("""
-                    SELECT grade, out_of, proficiency
+                    SELECT grade, out_of,
+                           COALESCE(proficiency, 0) AS proficiency
                     FROM grades
                     WHERE assignment_id = ? AND user_id = ?
                     ORDER BY id DESC
@@ -1085,6 +1384,7 @@ def grade_tracker_class(class_id):
                 g_val = decrypt_grade_safe(g_token)
                 out_val = decrypt_grade_safe(out_token)
 
+            # compute percent
             percent = None
             if g_val is not None and out_val not in (None, 0):
                 percent = round((g_val / out_val) * 100, 2)
@@ -1093,6 +1393,7 @@ def grade_tracker_class(class_id):
                 else:
                     regular_scores.append(percent)
 
+            # enrich assignment dict
             a["grade_value"] = g_val
             a["out_of_value"] = out_val
             a["percent"] = percent
@@ -1100,6 +1401,9 @@ def grade_tracker_class(class_id):
 
             assignments.append(a)
 
+        # ---------------------------------------------------------
+        # 4) Compute class average
+        # ---------------------------------------------------------
         if proficiency_scores:
             p_avg = sum(proficiency_scores) / len(proficiency_scores)
         else:
@@ -1125,6 +1429,7 @@ def grade_tracker_class(class_id):
         assignments=assignments,
         class_average=class_average,
     )
+
 
 @app.route("/add-grade/<int:assignment_id>", methods=["GET", "POST"])
 def add_grade(assignment_id):
@@ -1206,6 +1511,203 @@ def submitted_assignments():
         assignments = c.fetchall()
 
     return render_template("submitted_assignments.html", assignments=assignments)
+
+@app.route("/goals")
+def goals_page():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    
+    if not feature_enabled("grade_tracker", default=True):
+        if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+            pass
+        else:
+            return render_template("disabled.html"), 403
+
+    user_id = session["user_id"]
+
+    # --- NEW: fetch class list for dropdown ---
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT id, class_name FROM class_links WHERE user_id = %s ORDER BY class_name ASC", (user_id,))
+        else:
+            c.execute("SELECT id, class_name FROM class_links WHERE user_id = ? ORDER BY class_name ASC", (user_id,))
+        class_list = c.fetchall()
+    # ------------------------------------------
+
+    rows = get_user_goals(user_id)
+
+    # attach progress to each goal for UI rendering
+    annotated = []
+    for r in rows:
+        progress = compute_goal_progress(r, user_id)
+        try:
+            g = dict(r)
+        except Exception:
+            g = {
+                "id": row_val(r, "id"),
+                "user_id": row_val(r, "user_id"),
+                "class_id": row_val(r, "class_id"),
+                "title": row_val(r, "title"),
+                "goal_type": row_val(r, "goal_type"),
+                "target_value": row_val(r, "target_value"),
+                "deadline": row_val(r, "deadline"),
+                "created_at": row_val(r, "created_at"),
+            }
+        g["progress_meta"] = progress
+        annotated.append(g)
+        print("CLASS LIST:", class_list)
+    return render_template("goals.html", goals=annotated, class_list=class_list)
+
+
+@app.route("/goals/add", methods=["POST"])
+def add_goal():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    title = request.form.get("title", "").strip()
+    goal_type = request.form.get("goal_type", "").strip().lower()
+    target_value = request.form.get("target_value", "").strip()
+    deadline = request.form.get("deadline", "").strip() or None
+    class_id = request.form.get("class_id") or None
+
+    # basic validation
+    if not title or not goal_type:
+        flash("Title and goal type are required.")
+        return redirect(url_for("goals_page"))
+
+    # normalize numeric target
+    tval = None
+    if target_value:
+        try:
+            tval = float(target_value)
+        except Exception:
+            tval = None
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("""
+                INSERT INTO goals (user_id, class_id, title, goal_type, target_value, deadline)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (session["user_id"], class_id, title, goal_type, tval, deadline))
+        else:
+            c.execute("""
+                INSERT INTO goals (user_id, class_id, title, goal_type, target_value, deadline)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (session["user_id"], class_id, title, goal_type, tval, deadline))
+
+    flash("Goal added.")
+    return redirect(url_for("goals_page"))
+
+
+@app.route("/goals/<int:goal_id>/update", methods=["POST"])
+def update_goal(goal_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    title = request.form.get("title", "").strip()
+    goal_type = request.form.get("goal_type", "").strip().lower()
+    target_value = request.form.get("target_value", "").strip()
+    deadline = request.form.get("deadline", "").strip() or None
+    class_id = request.form.get("class_id") or None
+
+    if not title or not goal_type:
+        flash("Title and goal type required.")
+        return redirect(url_for("goals_page"))
+
+    tval = None
+    if target_value:
+        try:
+            tval = float(target_value)
+        except Exception:
+            tval = None
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("""
+                UPDATE goals SET title = %s, goal_type = %s, target_value = %s, deadline = %s, class_id = %s
+                WHERE id = %s AND user_id = %s
+            """, (title, goal_type, tval, deadline, class_id, goal_id, session["user_id"]))
+        else:
+            c.execute("""
+                UPDATE goals SET title = ?, goal_type = ?, target_value = ?, deadline = ?, class_id = ?
+                WHERE id = ? AND user_id = ?
+            """, (title, goal_type, tval, deadline, class_id, goal_id, session["user_id"]))
+
+    flash("Goal updated.")
+    return redirect(url_for("goals_page"))
+
+
+@app.route("/goals/<int:goal_id>/delete", methods=["POST"])
+def delete_goal(goal_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("DELETE FROM goals WHERE id = %s AND user_id = %s", (goal_id, session["user_id"]))
+        else:
+            c.execute("DELETE FROM goals WHERE id = ? AND user_id = ?", (goal_id, session["user_id"]))
+
+    flash("Goal removed.")
+    return redirect(url_for("goals_page"))
+
+
+# JSON APIs for widgets / AJAX
+@app.route("/api/goals")
+def api_goals():
+    if "user_id" not in session:
+        return jsonify({"error": "auth_required"}), 401
+
+    rows = get_user_goals(session["user_id"])
+    out = []
+    for r in rows:
+        try:
+            g = dict(r)
+        except Exception:
+            g = {
+                "id": row_val(r, "id"),
+                "user_id": row_val(r, "user_id"),
+                "class_id": row_val(r, "class_id"),
+                "title": row_val(r, "title"),
+                "goal_type": row_val(r, "goal_type"),
+                "target_value": row_val(r, "target_value"),
+                "deadline": row_val(r, "deadline"),
+                "created_at": row_val(r, "created_at"),
+            }
+        g["progress_meta"] = compute_goal_progress(r, session["user_id"])
+        out.append(g)
+    return jsonify(out)
+
+
+@app.route("/api/goals/<int:goal_id>")
+def api_goal_detail(goal_id):
+    if "user_id" not in session:
+        return jsonify({"error": "auth_required"}), 401
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT * FROM goals WHERE id = %s AND user_id = %s", (goal_id, session["user_id"]))
+        else:
+            c.execute("SELECT * FROM goals WHERE id = ? AND user_id = ?", (goal_id, session["user_id"]))
+        row = c.fetchone()
+        if not row:
+            return jsonify({"error": "not_found"}), 404
+
+    try:
+        g = dict(row)
+    except Exception:
+        g = {
+            "id": row_val(row, "id"),
+            "user_id": row_val(row, "user_id"),
+            "class_id": row_val(row, "class_id"),
+            "title": row_val(row, "title"),
+            "goal_type": row_val(row, "goal_type"),
+            "target_value": row_val(row, "target_value"),
+            "deadline": row_val(row, "deadline"),
+            "created_at": row_val(row, "created_at"),
+        }
+    g["progress_meta"] = compute_goal_progress(row, session["user_id"])
+    return jsonify(g)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

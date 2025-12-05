@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Your Goals</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        /* Shared tag styling */
+        .tag-goal {
+            background-color: rgba(34,197,94,0.15);
+            color: rgb(34,197,94);
+            border: 1px solid rgba(34,197,94,0.25);
+        }
+        .card-shadow { box-shadow: 0 8px 20px rgba(0,0,0,0.08); }
+    </style>
+</head>
+
+<body class="{% if dark_mode %}bg-gray-900 text-gray-100{% else %}bg-gray-100 text-gray-900{% endif %} min-h-screen">
+
+<header class="p-5 flex items-center justify-between 
+    {% if dark_mode %}bg-gray-800 text-gray-100{% else %}bg-white text-gray-900{% endif %} shadow">
+    <h1 class="text-2xl font-bold">Goals</h1>
+
+    <a href="/" class="text-sm font-medium 
+        {% if dark_mode %}text-indigo-300{% else %}text-indigo-600{% endif %}">
+        ← Back
+    </a>
+</header>
+
+<main class="max-w-4xl mx-auto p-6 space-y-6">
+
+    <!-- Add Goal Button -->
+    <div class="flex justify-end">
+        <button onclick="openAddGoalModal()" class="px-4 py-2 rounded-lg font-medium 
+            {% if dark_mode %}bg-indigo-600 hover:bg-indigo-500{% else %}bg-indigo-500 hover:bg-indigo-600 text-white{% endif %}">
+            + Add Goal
+        </button>
+    </div>
+
+    <!-- Goals List -->
+    {% if goals %}
+        <div class="space-y-4">
+            {% for g in goals %}
+                <div class="rounded-xl p-5 card-shadow 
+                    {% if dark_mode %}bg-gray-800 border border-gray-700{% else %}bg-white border border-gray-200{% endif %}">
+
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1">
+                            <h2 class="text-lg font-semibold flex items-center gap-2">
+                                {{ g.title }}
+                                <span class="px-2 py-1 text-xs rounded tag-goal">Goal</span>
+                            </h2>
+
+                            <p class="mt-1 text-sm opacity-70">
+                                Type: {{ g.goal_type|capitalize }}
+                                {% if g.class_id %}
+                                    • Class: {{ g.class_id }}
+                                {% endif %}
+                                {% if g.deadline %}
+                                    • Deadline: {{ g.deadline }}
+                                {% endif %}
+                            </p>
+
+                            <!-- Progress Section -->
+                            {% set meta = g.progress_meta %}
+                            <div class="mt-4">
+                                {% if meta.type == "grade" %}
+                                    <p class="text-sm opacity-80">Current: {{ meta.progress or "N/A" }}%  
+                                    {% if meta.target %} • Target: {{ meta.target }}%{% endif %}</p>
+
+                                    {% if meta.progress %}
+                                        <div class="w-full bg-gray-300 dark:bg-gray-700 h-2 rounded mt-2">
+                                            <div class="h-2 rounded 
+                                                {% if dark_mode %}bg-green-500{% else %}bg-green-600{% endif %}"
+                                                style="width: '{{ meta.percent_of_target if meta.percent_of_target else 0 }}%'">
+                                            </div>
+                                        </div>
+                                    {% endif %}
+
+                                {% elif meta.type == "completion" %}
+                                    <p class="text-sm opacity-80">
+                                        Completed: {{ meta.completed }} / {{ meta.target }}
+                                    </p>
+
+                                    <div class="w-full bg-gray-300 dark:bg-gray-700 h-2 rounded mt-2">
+                                        <div class="h-2 rounded 
+                                            {% if dark_mode %}bg-green-500{% else %}bg-green-600{% endif %}"
+                                            style="width: '{{ meta.percent_of_target if meta.percent_of_target else 0 }}%'">
+                                        </div>
+                                    </div>
+
+                                {% else %}
+                                    <p class="text-sm opacity-80">Progress data unavailable.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Edit/Delete -->
+                        <div class="flex flex-col gap-2 ml-4">
+                            <button onclick="openEditGoalModal('{{ g.id }}', '{{ g.title }}', '{{ g.goal_type }}', '{{ g.target_value }}', '{{ g.deadline }}', '{{ g.class_id }}')"
+                                class="px-3 py-1 rounded text-sm 
+                                {% if dark_mode %}bg-blue-600 hover:bg-blue-500{% else %}bg-blue-500 hover:bg-blue-600 text-white{% endif %}">
+                                Edit
+                            </button>
+
+                            <form method="POST" action="/goals/{{ g.id }}/delete">
+                                <button class="px-3 py-1 rounded text-sm 
+                                    {% if dark_mode %}bg-red-600 hover:bg-red-500{% else %}bg-red-500 hover:bg-red-600 text-white{% endif %}">
+                                    Delete
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                </div>
+            {% endfor %}
+        </div>
+
+    {% else %}
+        <p class="text-center opacity-70">No goals yet. Add your first one!</p>
+    {% endif %}
+
+</main>
+
+
+
+
+<!-- Add Goal Modal -->
+<div id="addGoalModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+    <div class="p-6 rounded-xl w-full max-w-md 
+        {% if dark_mode %}bg-gray-800 border border-gray-700{% else %}bg-white border border-gray-200{% endif %}">
+        
+        <h2 class="text-xl font-semibold mb-4">Add Goal</h2>
+
+        <form method="POST" action="/goals/add" class="space-y-4">
+
+            <div>
+                <label class="text-sm font-medium">Title</label>
+                <input name="title" required class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Goal Type</label>
+                <select name="goal_type" required class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+                    <option value="grade">Reach a grade %</option>
+                    <option value="completion">Complete assignments</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Target Value</label>
+                <input name="target_value" type="number" step="0.1" class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Class (optional)</label>
+                <select name="class_id" class="w-full mt-1 p-2 rounded
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+                    <option value="">No class</option>
+                    {% for c in class_list %}
+                        <option value="{{ c.id }}">{{ c.class_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Deadline (optional)</label>
+                <input name="deadline" type="date" class="w-full mt-1 p-2 rounded
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="closeAddGoalModal()"
+                    class="px-4 py-2 rounded 
+                    {% if dark_mode %}bg-gray-700 hover:bg-gray-600{% else %}bg-gray-300 hover:bg-gray-400{% endif %}">
+                    Cancel
+                </button>
+                <button class="px-4 py-2 rounded 
+                    {% if dark_mode %}bg-indigo-600 hover:bg-indigo-500{% else %}bg-indigo-500 hover:bg-indigo-600 text-white{% endif %}">
+                    Add
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>
+
+
+
+<!-- Edit Goal Modal -->
+<div id="editGoalModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center p-4">
+    <div class="p-6 rounded-xl w-full max-w-md 
+        {% if dark_mode %}bg-gray-800 border border-gray-700{% else %}bg-white border border-gray-200{% endif %}">
+        
+        <h2 class="text-xl font-semibold mb-4">Edit Goal</h2>
+
+        <form id="editGoalForm" method="POST" class="space-y-4">
+
+            <div>
+                <label class="text-sm font-medium">Title</label>
+                <input id="edit_title" name="title" required class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Goal Type</label>
+                <select id="edit_goal_type" name="goal_type" required class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+                    <option value="grade">Reach a grade %</option>
+                    <option value="completion">Complete assignments</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Target Value</label>
+                <input id="edit_target_value" name="target_value" type="number" step="0.1" class="w-full mt-1 p-2 rounded 
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div>
+                <label class="text-sm font-medium">Class (optional)</label>
+                <select id="edit_class_id" name="class_id" class="w-full mt-1 p-2 rounded
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+                    <option value="">No class</option>
+                    {% for c in class_list %}
+                        <option value="{{ c.id }}">{{ c.class_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+
+            <div>
+                <label class="text-sm font-medium">Deadline (optional)</label>
+                <input id="edit_deadline" name="deadline" type="date" class="w-full mt-1 p-2 rounded
+                    {% if dark_mode %}bg-gray-700 text-gray-100{% else %}bg-gray-200 text-gray-900{% endif %}">
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="closeEditGoalModal()"
+                    class="px-4 py-2 rounded 
+                    {% if dark_mode %}bg-gray-700 hover:bg-gray-600{% else %}bg-gray-300 hover:bg-gray-400{% endif %}">
+                    Cancel
+                </button>
+
+                <button class="px-4 py-2 rounded 
+                    {% if dark_mode %}bg-indigo-600 hover:bg-indigo-500{% else %}bg-indigo-500 hover:bg-indigo-600 text-white{% endif %}">
+                    Update
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>
+
+
+
+
+<script>
+function openAddGoalModal() {
+    document.getElementById("addGoalModal").classList.remove("hidden");
+}
+function closeAddGoalModal() {
+    document.getElementById("addGoalModal").classList.add("hidden");
+}
+
+function openEditGoalModal(id, title, type, target, deadline, class_id) {
+    document.getElementById("edit_title").value = title;
+    document.getElementById("edit_goal_type").value = type;
+    document.getElementById("edit_target_value").value = target || "";
+    document.getElementById("edit_deadline").value = deadline || "";
+    document.getElementById("edit_class_id").value = class_id || "";
+
+    document.getElementById("editGoalForm").action = "/goals/" + id + "/update";
+
+    document.getElementById("editGoalModal").classList.remove("hidden");
+}
+function closeEditGoalModal() {
+    document.getElementById("editGoalModal").classList.add("hidden");
+}
+</script>
+
+</body>
+</html>
