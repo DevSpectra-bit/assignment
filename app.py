@@ -349,7 +349,7 @@ def inject_dark_mode():
     return {"dark_mode": dark}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2025.12.05"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2025.12.07"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
