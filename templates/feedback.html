@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feedback - Assignment Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="{% if dark_mode %}bg-gray-900 text-gray-100{% else %}bg-gray-50 text-gray-900{% endif %}">
+    <!-- Header -->
+    <header class="{% if dark_mode %}bg-gray-800 border-gray-700{% else %}bg-white border-gray-200{% endif %} border-b shadow-sm">
+        <div class="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+            <h1 class="text-2xl font-bold {% if dark_mode %}text-indigo-300{% else %}text-indigo-600{% endif %}">Assignment Tracker</h1>
+            <nav class="flex gap-4 items-center">
+                <a href="{{ url_for('index') }}" class="hover:underline">Home</a>
+                <a href="{{ url_for('account') }}" class="hover:underline">Account</a>
+                <a href="{{ url_for('logout') }}" class="text-red-500 hover:underline">Logout</a>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-3xl mx-auto px-6 py-12">
+        <!-- Title -->
+        <div class="mb-8">
+            <h2 class="text-3xl font-bold mb-2">We'd Love Your Feedback!</h2>
+            <p class="{% if dark_mode %}text-gray-400{% else %}text-gray-600{% endif %}">
+                Help us improve the Assignment Tracker by sharing your thoughts. Your feedback is valuable and helps us understand how we can better support your academic journey.
+            </p>
+        </div>
+
+        <!-- Flash Messages -->
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="{% if 'Thank you' in message %}bg-green-100 text-green-800 border-green-300{% else %}bg-blue-100 text-blue-800 border-blue-300{% endif %} border rounded-lg p-4 mb-6">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- Feedback Form Card -->
+        <div class="{% if dark_mode %}bg-gray-800 border-gray-700{% else %}bg-white border-gray-200{% endif %} border rounded-xl shadow-md p-8 mb-8">
+            <form method="POST" class="space-y-6">
+                <!-- Message Input -->
+                <div>
+                    <label for="message" class="block text-lg font-semibold mb-3 {% if dark_mode %}text-gray-200{% else %}text-gray-800{% endif %}">
+                        Your Feedback
+                    </label>
+                    <textarea
+                        id="message"
+                        name="message"
+                        rows="8"
+                        placeholder="Tell us what you think... What features do you love? What could be improved? Any suggestions?"
+                        required
+                        class="w-full rounded-lg p-4 border focus:ring-2 focus:ring-indigo-500 focus:border-transparent {% if dark_mode %}bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-400{% else %}bg-white border-gray-300 text-gray-900 placeholder-gray-500{% endif %}"
+                    ></textarea>
+                    <p class="text-sm {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %} mt-2">Be as specific as you'd like—we read every response!</p>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="flex gap-4">
+                    <button
+                        type="submit"
+                        class="flex-1 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors duration-200"
+                    >
+                        Submit Feedback
+                    </button>
+                    <a
+                        href="{{ url_for('index') }}"
+                        class="flex-1 bg-gray-300 text-gray-800 font-semibold py-3 px-6 rounded-lg hover:bg-gray-400 transition-colors duration-200 text-center"
+                    >
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+
+        <!-- Info Section -->
+        <div class="{% if dark_mode %}bg-gray-800 border-gray-700{% else %}bg-blue-50 border-blue-200{% endif %} border rounded-lg p-6">
+            <h3 class="font-semibold mb-3 {% if dark_mode %}text-blue-300{% else %}text-blue-900{% endif %}">📝 Feedback Examples</h3>
+            <ul class="space-y-2 text-sm {% if dark_mode %}text-gray-400{% else %}text-gray-700{% endif %}">
+                <li>• <strong>Feature Requests:</strong> "It would be helpful if I could set recurring assignments."</li>
+                <li>• <strong>Bugs:</strong> "The due date calculation seems off for assignments due at midnight."</li>
+                <li>• <strong>Usability:</strong> "The dark mode makes it easier to work late at night."</li>
+                <li>• <strong>General Thoughts:</strong> "I love how the grade tracker helps me stay on top of my GPA!"</li>
+            </ul>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="{% if dark_mode %}bg-gray-800 border-gray-700{% else %}bg-gray-100 border-gray-200{% endif %} border-t mt-12 py-6">
+        <div class="max-w-6xl mx-auto px-6 text-center text-sm {% if dark_mode %}text-gray-400{% else %}text-gray-600{% endif %}">
+            <p>&copy; 2025 Assignment Tracker. All feedback is anonymous and helps improve your experience.</p>
+        </div>
+    </footer>
+</body>
+</html>

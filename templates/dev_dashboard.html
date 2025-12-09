@@ -208,19 +208,7 @@
         <a href="{{ url_for('dev_stats') }}" class="button">📈 View Class Insights</a>
         <br>
         <br>
-        <form action="{{ url_for('dev_toggle_maintenance') }}" method="get" style="display:inline;">
-            <button type="submit" class="button"
-                style="background:#ff6b6b;color:white;border:none;padding:10px 15px;border-radius:8px;">
-                🛠 Toggle Maintenance Mode
-            </button>
-        </form>
-
-        {% if maintenance_mode %}
-            <strong class="text-red-600">Maintenance Mode: ON</strong>
-        {% else %}
-            <strong class="text-green-600">Maintenance Mode: OFF</strong>
-        {% endif %}
-
+        
         <div class="back">
             <a href="{{ url_for('logout') }}">← Back to Assignments</a>
         </div>

@@ -49,6 +49,9 @@
 
           <!-- ACCOUNT -->
           <a href="/account" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Account Info</a>
+          
+          <!-- FEEDBACK -->
+          <a href="{{ url_for('feedback') }}" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Submit Feedback</a>
 
           <!-- MANAGE CLASSES -->
           <a href="{{ url_for('manage_classes') }}" class="block px-4 py-2 {% if dark_mode %}text-gray-100 hover:bg-gray-700{% else %}hover:bg-gray-100 text-gray-800{% endif %}">Manage Classes</a>

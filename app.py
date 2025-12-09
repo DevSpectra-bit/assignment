@@ -324,6 +324,25 @@ def init_db():
                     FOREIGN KEY(class_id) REFERENCES classes(id)
                 );
             """)
+        # Feedback form
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT,
+                    message TEXT,
+                    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    message TEXT,
+                    submitted_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
 init_db()
 
@@ -349,7 +368,7 @@ def inject_dark_mode():
     return {"dark_mode": dark}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2025.12.07"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2025.12.09"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
@@ -1708,6 +1727,71 @@ def api_goal_detail(goal_id):
         }
     g["progress_meta"] = compute_goal_progress(row, session["user_id"])
     return jsonify(g)
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    """Feedback form for users to submit feedback about the website."""
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        message = request.form.get("message", "").strip()
+        if not message:
+            flash("Please enter some feedback.")
+            return redirect(url_for("feedback"))
+
+        # Get user's name from session or use username
+        name = session.get("username", "Anonymous")
+
+        with db_cursor() as c:
+            if IS_POSTGRES:
+                c.execute(
+                    "INSERT INTO feedback (name, message, submitted_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
+                    (name, message)
+                )
+            else:
+                c.execute(
+                    "INSERT INTO feedback (name, message, submitted_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+                    (name, message)
+                )
+        flash("✅ Thank you for your feedback! We appreciate your input.")
+        return redirect(url_for("feedback"))
+
+    # GET request - show form
+    return render_template("feedback.html")
+
+
+@app.route("/feedback-list")
+def feedback_list():
+    """Admin view to see all feedback submitted."""
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+
+    # Only admins can view all feedback
+    if not (session.get("is_admin") == 1 or session.get("dev")):
+        flash("You do not have permission to view feedback.")
+        return redirect(url_for("index"))
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT id, name, message, submitted_at
+                FROM feedback
+                ORDER BY submitted_at DESC
+            """)
+        else:
+            c.execute("""
+                SELECT id, name, message, submitted_at
+                FROM feedback
+                ORDER BY submitted_at DESC
+            """)
+        feedbacks = c.fetchall()
+
+    return render_template("feedback_list.html", feedbacks=feedbacks)
+
+
+
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

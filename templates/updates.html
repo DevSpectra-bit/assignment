@@ -67,6 +67,32 @@
             <!-- Update 1 -->
             <article class="card p-5 rounded-lg shadow-sm">
                 <div class="flex items-start gap-4">
+                    <time class="text-sm muted w-28 shrink-0">2025-12-09</time>
+                    <div class="flex-1">
+                        <div class="flex items-center justify-between gap-4">
+                            <h2 class="text-lg font-medium">Feedback Forum & Performance Improvements</h2>
+
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-1 text-xs rounded tag-feature">Feature</span>
+                                <span class="px-2 py-1 text-xs rounded tag-ui">UI</span>
+                                <span class="px-2 py-1 text-xs rounded tag-backend">Backend</span>
+                            </div>
+                        </div>
+
+                        <p class="mt-2 muted">
+                            Added a feedback forum for users to submit end-of-term feedback. Admins can view all feedback via the feedback dashboard. Also optimized database queries with proper indexing on frequently queried columns (user_id, class_name, submitted). Refactored all database connections to use a context manager for cleaner, more reliable connection handling.
+                        </p>
+
+                        <p class="mt-3">
+                            <a href="{{ url_for('feedback') }}" class="text-sm font-medium" style="color:var(--primary)">Try it out →</a>
+                        </p>
+                    </div>
+                </div>
+            </article>
+
+            <!-- Update 1.5 -->
+            <article class="card p-5 rounded-lg shadow-sm">
+                <div class="flex items-start gap-4">
                     <time class="text-sm muted w-28 shrink-0">2025-12-08</time>
                     <div class="flex-1">
                         <div class="flex items-center justify-between gap-4">
