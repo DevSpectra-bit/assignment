@@ -1,5 +1,5 @@
 # app.py — cleaned version (maintenance logic removed, shared DB helpers, kept all features)
-from flask import Flask, render_template, request, redirect, url_for, session, flash, current_app
+from flask import Flask, render_template, request, redirect, url_for, session, flash, current_app, jsonify, abort
 from datetime import datetime, date
 import os
 import psycopg2
@@ -12,7 +12,7 @@ from cryptography.fernet import Fernet
 from contextlib import contextmanager
 from typing import Iterator
 from math import isfinite
-from flask import jsonify
+import re
 
 # Load .env if available
 load_dotenv()
@@ -368,7 +368,7 @@ def inject_dark_mode():
     return {"dark_mode": dark}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2025.12.09"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2025.12.10"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
@@ -1972,6 +1972,15 @@ def predict():
             }
 
     return render_template("predict.html", class_list=class_list, result=result, error=error)
+
+
+
+@app.route("/release-notes/<date>")
+def release_notes(date):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+        abort(404)
+
+    return render_template(f"release_notes/{date}.html")
 
 
 if __name__ == "__main__":
