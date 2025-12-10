@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Grade Predictor</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="{% if dark_mode %}bg-gray-900 min-h-screen font-sans text-gray-100{% else %}bg-gray-50 min-h-screen font-sans text-gray-800{% endif %}">
+  <div class="max-w-3xl mx-auto py-16 px-4">
+    <h1 class="text-2xl font-semibold mb-4 {% if dark_mode %}text-indigo-200{% else %}text-indigo-600{% endif %}">Grade Predictor & Projections</h1>
+
+    {% if error %}
+      <div class="mb-4 p-3 {% if dark_mode %}bg-red-900 text-red-200{% else %}bg-red-100 text-red-800{% endif %} rounded">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" class="mb-6 {% if dark_mode %}bg-gray-800 border border-gray-700 text-gray-100{% else %}bg-white text-gray-900{% endif %} p-6 rounded shadow">
+      <div class="mb-4">
+        <label class="block text-sm font-medium {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">Class</label>
+        <select name="class_id" class="mt-1 block w-full rounded {% if dark_mode %}border-gray-600 bg-gray-900 text-gray-100{% else %}border-gray-300 bg-white text-gray-900{% endif %}">
+          <option value="">All classes</option>
+          {% for c in class_list %}
+            <option value="{{ c[0] }}">{{ c[1] }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-medium {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">Hypothetical grades</label>
+        <textarea name="hypothetical" rows="3" class="mt-1 block w-full rounded {% if dark_mode %}border-gray-600 bg-gray-900 text-gray-100{% else %}border-gray-300 bg-white text-gray-900{% endif %}" placeholder="Examples: 92, 88/100, 85, 100/100">{{ request.form.hypothetical or '' }}</textarea>
+        <p class="text-xs {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %} mt-1">Enter comma-separated percentages or score/out_of pairs. Example: <span class="font-mono">92, 88/100, 85</span></p>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-sm font-medium {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">Target average (optional)</label>
+          <input type="text" name="target" class="mt-1 block w-full rounded {% if dark_mode %}border-gray-600 bg-gray-900 text-gray-100{% else %}border-gray-300 bg-white text-gray-900{% endif %}" placeholder="e.g. 90" value="{{ request.form.target or '' }}">
+        </div>
+        <div>
+          <label class="block text-sm font-medium {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">Future assignments to average over</label>
+          <input type="number" name="future_count" class="mt-1 block w-full rounded {% if dark_mode %}border-gray-600 bg-gray-900 text-gray-100{% else %}border-gray-300 bg-white text-gray-900{% endif %}" placeholder="Leave empty to use hypotheticals" value="{{ request.form.future_count or '' }}">
+        </div>
+      </div>
+
+      <div class="flex justify-end">
+        <button type="submit" class="px-4 py-2 {% if dark_mode %}bg-indigo-600 hover:bg-indigo-700 text-white{% else %}bg-blue-600 hover:bg-blue-700 text-white{% endif %} rounded">Compute Projection</button>
+      </div>
+    </form>
+
+    {% if result %}
+      <div class="p-6 rounded shadow {% if dark_mode %}bg-gray-800 text-gray-100{% else %}bg-white text-gray-900{% endif %}">
+        <h2 class="text-lg font-medium mb-2 {% if dark_mode %}text-gray-200{% else %}text-gray-800{% endif %}">Results</h2>
+        <ul class="space-y-2 text-sm {% if dark_mode %}text-gray-200{% else %}text-gray-700{% endif %}">
+          <li><strong>Class:</strong> {{ result.class_name or 'All classes' }}</li>
+          <li><strong>Current assignments:</strong> {{ result.current_count }}</li>
+          <li><strong>Current average:</strong> {{ result.current_avg if result.current_avg is not none else '—' }}</li>
+          <li><strong>Hypothetical added:</strong> {{ result.hypo_count }}</li>
+          <li><strong>Projected average:</strong> {{ result.projected_avg }}</li>
+          {% if result.target %}
+            <li><strong>Target:</strong> {{ result.target }}</li>
+            <li><strong>Required average across future assignments:</strong>
+              {% if result.required_for_target is not none %}
+                {{ result.required_for_target }}
+              {% else %}
+                N/A
+              {% endif %}
+            </li>
+          {% endif %}
+        </ul>
+      </div>
+    {% endif %}
+
+    <div class="mt-6 text-xs {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %}">
+      <p>Notes: Percentages are computed from current latest grades per assignment. Use score/out_of to convert raw scores into percentages.</p>
+    </div>
+  </div>
+</body>
+</html>

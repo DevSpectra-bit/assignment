@@ -628,6 +628,86 @@ def compute_goal_progress(goal_row, user_id):
             return {"type": gtype, "progress": None, "target": target}
 
 
+def get_latest_percentages_for_class(class_name, user_id, cursor):
+    """Return a list of latest grade percentages (0..100) for assignments in the given class_name for user.
+
+    If ``class_name`` is None, returns latest percentages for all classes for the user.
+    """
+    # fetch assignment ids for the class (case-insensitive compare) or all
+    if class_name:
+        if IS_POSTGRES:
+            cursor.execute("""
+                SELECT id
+                FROM assignments
+                WHERE user_id = %s AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
+            """, (user_id, class_name))
+        else:
+            cursor.execute("""
+                SELECT id
+                FROM assignments
+                WHERE user_id = ? AND LOWER(TRIM(cl)) = LOWER(TRIM(?))
+            """, (user_id, class_name))
+    else:
+        if IS_POSTGRES:
+            cursor.execute("SELECT id FROM assignments WHERE user_id = %s", (user_id,))
+        else:
+            cursor.execute("SELECT id FROM assignments WHERE user_id = ?", (user_id,))
+
+    assignment_rows = cursor.fetchall()
+    assignment_ids = [row_val(r, "id") for r in assignment_rows]
+    if not assignment_ids:
+        return []
+
+    # Fetch latest grade entries per assignment in a single query
+    if IS_POSTGRES:
+        placeholders = ",".join(["%s"] * len(assignment_ids))
+        sql = f"""
+            SELECT g.assignment_id, g.grade, g.out_of
+            FROM grades g
+            JOIN (
+                SELECT assignment_id, MAX(id) AS max_id
+                FROM grades
+                WHERE user_id = %s AND assignment_id IN ({placeholders})
+                GROUP BY assignment_id
+            ) lg ON lg.max_id = g.id
+            WHERE g.user_id = %s
+        """
+        params = [user_id] + assignment_ids + [user_id]
+        cursor.execute(sql, tuple(params))
+    else:
+        placeholders = ",".join(["?"] * len(assignment_ids))
+        sql = f"""
+            SELECT g.assignment_id, g.grade, g.out_of
+            FROM grades g
+            JOIN (
+                SELECT assignment_id, MAX(id) AS max_id
+                FROM grades
+                WHERE user_id = ? AND assignment_id IN ({placeholders})
+                GROUP BY assignment_id
+            ) lg ON lg.max_id = g.id
+            WHERE g.user_id = ?
+        """
+        params = [user_id] + assignment_ids + [user_id]
+        cursor.execute(sql, params)
+
+    grade_rows = cursor.fetchall()
+    percentages = []
+    for gr in grade_rows:
+        enc_grade = row_val(gr, "grade")
+        enc_out = row_val(gr, "out_of")
+        g_val = decrypt_grade_safe(enc_grade)
+        o_val = decrypt_grade_safe(enc_out)
+        if g_val is None or o_val in (None, 0):
+            continue
+        try:
+            pct = (float(g_val) / float(o_val)) * 100.0
+            percentages.append(round(pct, 2))
+        except Exception:
+            continue
+
+    return percentages
+
+
 
 # --- AUTH ---
 @app.route("/register", methods=["GET", "POST"])
@@ -1789,8 +1869,109 @@ def feedback_list():
 
     return render_template("feedback_list.html", feedbacks=feedbacks)
 
+@app.route("/predict", methods=["GET", "POST"])
+def predict():
+    """Grade prediction and projection tool.
 
+    Allows the user to choose a class (or All classes) and enter hypothetical grades
+    to see projected averages and required future scores to hit a target.
+    """
+    if "user_id" not in session:
+        return redirect(url_for("login"))
 
+    user_id = session["user_id"]
+
+    # load classes for dropdown
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT id, class_name FROM class_links WHERE user_id = %s ORDER BY class_name ASC", (user_id,))
+        else:
+            c.execute("SELECT id, class_name FROM class_links WHERE user_id = ? ORDER BY class_name ASC", (user_id,))
+        class_list = c.fetchall()
+
+    result = None
+    error = None
+
+    if request.method == "POST":
+        class_id = request.form.get("class_id") or None
+        # normalize class name (if a class was selected)
+        class_name = None
+        if class_id:
+            try:
+                class_id_int = int(class_id)
+                class_name = get_class_name_from_links(class_id_int, user_id)
+            except Exception:
+                class_name = None
+
+        raw_hypo = request.form.get("hypothetical", "").strip()
+        # parse hypothetical entries: allow comma-separated percentages or score/out_of pairs
+        hypo_percentages = []
+        if raw_hypo:
+            parts = [p.strip() for p in raw_hypo.split(",") if p.strip()]
+            for p in parts:
+                if "/" in p:
+                    try:
+                        num, den = p.split("/", 1)
+                        numf = float(num)
+                        denf = float(den)
+                        if denf != 0:
+                            hypo_percentages.append(round((numf / denf) * 100.0, 2))
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        hypo_percentages.append(float(p))
+                    except Exception:
+                        pass
+
+        # optional: number of future assignments to spread required score over
+        future_count = request.form.get("future_count")
+        try:
+            future_count = int(future_count) if future_count else len(hypo_percentages)
+            if future_count < 0:
+                future_count = len(hypo_percentages)
+        except Exception:
+            future_count = len(hypo_percentages)
+
+        # optional target average to reach
+        target_val = request.form.get("target")
+        try:
+            target_val = float(target_val) if target_val else None
+        except Exception:
+            target_val = None
+
+        # compute current percentages
+        with db_cursor() as c:
+            current_percents = get_latest_percentages_for_class(class_name, user_id, c)
+
+        combined = list(current_percents) + list(hypo_percentages)
+
+        if not combined:
+            error = "No grades available and no hypothetical grades provided."
+        else:
+            current_avg = round(sum(current_percents) / len(current_percents), 2) if current_percents else None
+            projected_avg = round(sum(combined) / len(combined), 2)
+
+            required_for_target = None
+            if target_val is not None and future_count and future_count > 0:
+                # required average across future_count items to reach target overall
+                current_sum = sum(current_percents)
+                total_items_after = len(current_percents) + future_count
+                needed_total = target_val * total_items_after
+                remaining_needed = needed_total - current_sum
+                required_for_target = round(remaining_needed / future_count, 2)
+
+            result = {
+                "class_name": class_name,
+                "current_count": len(current_percents),
+                "current_avg": current_avg,
+                "hypo_count": len(hypo_percentages),
+                "projected_avg": projected_avg,
+                "required_for_target": required_for_target,
+                "target": target_val
+            }
+
+    return render_template("predict.html", class_list=class_list, result=result, error=error)
 
 
 if __name__ == "__main__":

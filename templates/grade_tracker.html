@@ -51,6 +51,10 @@
                 View Assignments →
               </a>
 
+              <div class="mt-4 p-4 {% if dark_mode %}bg-green-700 border-green-600 text-green-100{% else %}bg-green-100 border border-green-300 text-green-900{% endif %} rounded-lg text-sm">
+                <a href="{{ url_for('predict') }}"><strong>Predict Grades</strong></a>
+              </div>
+
               <div class="mt-4 p-4 {% if dark_mode %}bg-yellow-700 border-yellow-600 text-yellow-100{% else %}bg-yellow-100 border border-yellow-300 text-yellow-900{% endif %} rounded-lg text-sm">
                 <strong>Grades Coming Soon</strong><br>
                 This feature is being prepared for launch.

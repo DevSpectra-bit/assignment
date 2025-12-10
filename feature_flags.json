@@ -1,5 +1,5 @@
 {
-  "grade_tracker": false,
+  "grade_tracker": true,
   "register": true,
   "login": true,
   "manage_classes": true,
