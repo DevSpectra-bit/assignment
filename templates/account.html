@@ -23,6 +23,23 @@
     <div class="space-y-4">
 
       <div>
+        <p class="text-gray-500 text-sm">Badges</p>
+        <div class="flex items-center gap-2 mt-2">
+          {% if badges and badges|length > 0 %}
+            {% for b in badges %}
+              <div class="px-3 py-1 rounded-full border {% if dark_mode %}border-gray-700 bg-gray-800 text-gray-100{% else %}border-gray-200 bg-gray-50 text-gray-800{% endif %} flex items-center gap-2">
+                <span class="text-lg">{{ b.icon or '🏅' }}</span>
+                <span class="text-sm font-medium">{{ b.name }}</span>
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="text-sm text-gray-400">No badges yet — earn them by using the app!</div>
+          {% endif %}
+        </div>
+      </div>
+
+
+      <div>
         <p class="text-gray-500 text-sm">Username</p>
         <p class="text-lg font-medium">{{ user['username'] }}</p>
       </div>
@@ -87,5 +104,28 @@
     cb.addEventListener('change', function(){ apply(cb.checked); });
   })();
 </script>
+  {% if badge_popup %}
+  <div id="badge-toast" class="fixed right-6 bottom-6 z-50">
+    <div class="px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 {% if dark_mode %}bg-gray-800 text-gray-100{% else %}bg-white text-gray-900{% endif %}">
+      <div class="text-2xl">{{ badge_popup.icon }}</div>
+      <div>
+        <div class="font-medium">Badge earned: {{ badge_popup.name }}</div>
+        <div class="text-sm text-gray-500">Nice work — keep going!</div>
+      </div>
+      <button id="badge-dismiss" class="ml-3 text-gray-400 hover:text-gray-600">✕</button>
+    </div>
+  </div>
+  {% endif %}
+  <script>
+    (function(){
+      const el = document.getElementById('badge-toast');
+      if(!el) return;
+      const dismiss = document.getElementById('badge-dismiss');
+      function hide(){ el.style.display='none'; }
+      setTimeout(hide, 6000);
+      dismiss.addEventListener('click', hide);
+    })();
+  </script>
 </body>
 </html>
+

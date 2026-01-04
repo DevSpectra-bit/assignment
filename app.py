@@ -67,6 +67,12 @@ def get_connection():
         return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     conn = sqlite3.connect("assignments.db")
     conn.row_factory = sqlite3.Row
+    try:
+        # Use WAL mode and a small busy timeout to reduce "database is locked" errors under concurrency
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=2000;")
+    except Exception:
+        pass
     return conn
 
 @contextmanager
@@ -175,6 +181,8 @@ def init_db():
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0;")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dark_mode BOOLEAN DEFAULT FALSE;")
             c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_update TEXT DEFAULT '';")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TEXT DEFAULT '';")
+            c.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS streak_count INTEGER DEFAULT 0;")
         else:
             c.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -197,6 +205,14 @@ def init_db():
                 pass
             try:
                 c.execute("ALTER TABLE users ADD COLUMN last_seen_update TEXT DEFAULT '';")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN last_active TEXT DEFAULT '';")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                c.execute("ALTER TABLE users ADD COLUMN streak_count INTEGER DEFAULT 0;")
             except sqlite3.OperationalError:
                 pass
 
@@ -344,7 +360,151 @@ def init_db():
                 );
             """)
 
+        # Gamification: badges and user_badges
+        if IS_POSTGRES:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS badges (
+                    id SERIAL PRIMARY KEY,
+                    key TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    icon TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_badges (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                    badge_id INTEGER REFERENCES badges(id) ON DELETE CASCADE,
+                    awarded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+        else:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS badges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    description TEXT,
+                    icon TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS user_badges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    badge_id INTEGER,
+                    awarded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(badge_id) REFERENCES badges(id)
+                );
+            """)
+
 init_db()
+
+
+def ensure_default_badges():
+    """Insert a small set of default badges if they don't already exist."""
+    defaults = [
+        ("first_assignment", "First Assignment", "Created your first assignment.", "🎉"),
+        ("five_assignments", "Five Assignments", "Added five assignments.", "🏆"),
+        ("streak_3_days", "3-Day Streak", "Visited the app 3 days in a row.", "🔥"),
+        ("submitted_assignment", "Submitted Assignment", "Submitted your first assignment.", "✅"),
+        ("added_class", "Add a Class", "Add your first class", "📚"),
+    ]
+    with db_cursor() as c:
+        for key, name, desc, icon in defaults:
+            if IS_POSTGRES:
+                c.execute("SELECT id FROM badges WHERE key = %s", (key,))
+            else:
+                c.execute("SELECT id FROM badges WHERE key = ?", (key,))
+            if not c.fetchone():
+                if IS_POSTGRES:
+                    c.execute("INSERT INTO badges (key, name, description, icon) VALUES (%s, %s, %s, %s)", (key, name, desc, icon))
+                else:
+                    c.execute("INSERT INTO badges (key, name, description, icon) VALUES (?, ?, ?, ?)", (key, name, desc, icon))
+
+
+def award_badge_to_user(badge_key: str, user_id: int, cur=None) -> bool:
+    """Award a badge to a user by badge key.
+
+    If `cur` is provided, it will be used (avoiding opening a new DB connection),
+    otherwise a new cursor context is used.
+    Returns True if newly awarded, False if already had or missing.
+    """
+    def _do_award(c):
+        if IS_POSTGRES:
+            c.execute("SELECT id FROM badges WHERE key = %s", (badge_key,))
+        else:
+            c.execute("SELECT id FROM badges WHERE key = ?", (badge_key,))
+        row = c.fetchone()
+        if not row:
+            return False
+        badge_id = row_val(row, "id")
+        # check existing
+        if IS_POSTGRES:
+            c.execute("SELECT id FROM user_badges WHERE user_id = %s AND badge_id = %s", (user_id, badge_id))
+        else:
+            c.execute("SELECT id FROM user_badges WHERE user_id = ? AND badge_id = ?", (user_id, badge_id))
+        if c.fetchone():
+            return False
+        # insert
+        if IS_POSTGRES:
+            c.execute("INSERT INTO user_badges (user_id, badge_id) VALUES (%s, %s)", (user_id, badge_id))
+        else:
+            c.execute("INSERT INTO user_badges (user_id, badge_id) VALUES (?, ?)", (user_id, badge_id))
+        # fetch badge details to show popup
+        try:
+            if IS_POSTGRES:
+                c.execute("SELECT name, icon FROM badges WHERE id = %s", (badge_id,))
+            else:
+                c.execute("SELECT name, icon FROM badges WHERE id = ?", (badge_id,))
+            info = c.fetchone()
+            bname = row_val(info, "name") or (info[0] if info and len(info) > 0 else badge_key)
+            bicon = row_val(info, "icon") or (info[1] if info and len(info) > 1 else "🏅")
+        except Exception:
+            bname = badge_key
+            bicon = "🏅"
+
+        try:
+            session['badge_popup'] = {'key': badge_key, 'name': bname, 'icon': bicon}
+        except Exception:
+            pass
+
+        return True
+
+    if cur is not None:
+        return _do_award(cur)
+    else:
+        with db_cursor() as c:
+            return _do_award(c)
+
+
+def get_user_badge_keys(user_id: int):
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT b.key FROM badges b JOIN user_badges ub ON b.id = ub.badge_id WHERE ub.user_id = %s", (user_id,))
+        else:
+            c.execute("SELECT b.key FROM badges b JOIN user_badges ub ON b.id = ub.badge_id WHERE ub.user_id = ?", (user_id,))
+        keys = []
+        for r in c.fetchall():
+            try:
+                k = row_val(r, 'key')
+            except Exception:
+                k = None
+            if k is None:
+                try:
+                    k = r[0]
+                except Exception:
+                    k = None
+            if k is not None:
+                keys.append(k)
+        return keys
+
+
+ensure_default_badges()
 
 
 # --- Context processors & helpers ---
@@ -366,6 +526,17 @@ def inject_dark_mode():
                 except Exception:
                     dark = bool(val)
     return {"dark_mode": dark}
+
+
+@app.context_processor
+def inject_badge_popup():
+    """Expose any pending badge popup (popped from session) to templates as `badge_popup`."""
+    popup = None
+    try:
+        popup = session.pop('badge_popup', None)
+    except Exception:
+        popup = None
+    return {'badge_popup': popup}
 
 # --- UPDATES helpers ---
 UPDATES_VERSION = "2025.12.10"  # Change this string whenever updates.html changes
@@ -767,19 +938,68 @@ def login():
         if user:
             stored_pw = row_val(user, "password")
             if stored_pw and check_password_hash(stored_pw, password):
-                session["user_id"] = row_val(user, "id")
-                session["username"] = row_val(user, "username")
-                session["is_admin"] = row_val(user, "is_admin") or 0
-                has_seen_tutorial = row_val(user, "has_seen_tutorial") or False
-                try:
-                    has_seen_tutorial = bool(int(has_seen_tutorial)) if str(has_seen_tutorial) in ("0", "1") else bool(has_seen_tutorial)
-                except Exception:
-                    has_seen_tutorial = bool(has_seen_tutorial)
+                    user_id = int(row_val(user, "id"))
+                    session["user_id"] = user_id
+                    session["username"] = row_val(user, "username")
+                    session["is_admin"] = row_val(user, "is_admin") or 0
 
-                if not has_seen_tutorial:
-                    return redirect(url_for("tutorial"))
-                else:
-                    return redirect(url_for("index"))
+                    # update last_active and streak_count for login streaks
+                    today = date.today()
+                    try:
+                        with db_cursor() as c:
+                            if IS_POSTGRES:
+                                c.execute("SELECT last_active, streak_count FROM users WHERE id = %s", (user_id,))
+                            else:
+                                c.execute("SELECT last_active, streak_count FROM users WHERE id = ?", (user_id,))
+                            r = c.fetchone()
+                            last_active = row_val(r, "last_active") or ""
+                            streak = row_val(r, "streak_count") or 0
+                            try:
+                                streak = int(streak)
+                            except Exception:
+                                streak = 0
+                            last_date = None
+                            try:
+                                if last_active:
+                                    last_date = date.fromisoformat(last_active)
+                            except Exception:
+                                last_date = None
+
+                            if last_date == today:
+                                # already logged today, leave streak
+                                pass
+                            else:
+                                yesterday = today.fromordinal(today.toordinal() - 1)
+                                if last_date == yesterday:
+                                    streak = streak + 1
+                                else:
+                                    streak = 1
+
+                                # persist updated last_active and streak
+                                if IS_POSTGRES:
+                                    c.execute("UPDATE users SET last_active = %s, streak_count = %s WHERE id = %s", (today.isoformat(), streak, user_id))
+                                else:
+                                    c.execute("UPDATE users SET last_active = ?, streak_count = ? WHERE id = ?", (today.isoformat(), streak, user_id))
+
+                            # award streak badge if threshold reached
+                            try:
+                                if streak >= 3:
+                                    award_badge_to_user('streak_3_days', user_id, c)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    has_seen_tutorial = row_val(user, "has_seen_tutorial") or False
+                    try:
+                        has_seen_tutorial = bool(int(has_seen_tutorial)) if str(has_seen_tutorial) in ("0", "1") else bool(has_seen_tutorial)
+                    except Exception:
+                        has_seen_tutorial = bool(has_seen_tutorial)
+
+                    if not has_seen_tutorial:
+                        return redirect(url_for("tutorial"))
+                    else:
+                        return redirect(url_for("index"))
 
         flash("❌ Invalid username or password.")
     return render_template("login.html")
@@ -874,6 +1094,32 @@ def add():
                 (session["user_id"], title, cl, due_date, notes)
             )
 
+    # After insert, check if this is the user's first assignment and award badge
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = %s", (session["user_id"],))
+        else:
+            c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = ?", (session["user_id"],))
+        row = c.fetchone()
+        try:
+            cnt = int(row_val(row, "cnt") or 0)
+        except Exception:
+            try:
+                cnt = int(list(row)[0])
+            except Exception:
+                cnt = 0
+
+    if cnt == 1:
+        try:
+            award_badge_to_user('first_assignment', session['user_id'])
+        except Exception:
+            pass
+    elif cnt == 5:
+        try:
+            award_badge_to_user('five_assignments', session['user_id'])
+        except Exception:
+            pass
+
     return redirect(url_for("index"))
 
 @app.route("/delete/<int:id>", methods=["POST"])
@@ -899,6 +1145,30 @@ def submit_assignment(id):
         else:
             c.execute("UPDATE assignments SET submitted = 1 WHERE id = ? AND user_id = ?", (id, session["user_id"]))
 
+    # after marking submitted, check if this is the user's first submitted assignment
+    try:
+        with db_cursor() as c:
+            if IS_POSTGRES:
+                c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = %s AND submitted = TRUE", (session["user_id"],))
+            else:
+                c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = ? AND submitted = 1", (session["user_id"],))
+            row = c.fetchone()
+            try:
+                submitted_cnt = int(row_val(row, "cnt") or 0)
+            except Exception:
+                try:
+                    submitted_cnt = int(list(row)[0])
+                except Exception:
+                    submitted_cnt = 0
+
+        if submitted_cnt == 1:
+            try:
+                award_badge_to_user('submitted_assignment', session['user_id'])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     flash("Assignment marked as submitted!", "success")
     return redirect(url_for("index"))
 
@@ -921,12 +1191,40 @@ def manage_classes():
             if not class_name or not link:
                 flash("Both class name and link are required.")
             else:
+                # count existing classes before insert to determine if this is the first
+                try:
+                    if IS_POSTGRES:
+                        c.execute("SELECT COUNT(1) as cnt FROM class_links WHERE user_id = %s", (session["user_id"],))
+                    else:
+                        c.execute("SELECT COUNT(1) as cnt FROM class_links WHERE user_id = ?", (session["user_id"],))
+                    before_row = c.fetchone()
+                    try:
+                        before_cnt = int(row_val(before_row, "cnt") or 0)
+                    except Exception:
+                        try:
+                            before_cnt = int(list(before_row)[0])
+                        except Exception:
+                            before_cnt = 0
+                except Exception:
+                    before_cnt = 0
+
                 if IS_POSTGRES:
                     c.execute("INSERT INTO class_links (user_id, class_name, link) VALUES (%s, %s, %s)",
                               (session["user_id"], class_name, link))
                 else:
                     c.execute("INSERT INTO class_links (user_id, class_name, link) VALUES (?, ?, ?)",
                               (session["user_id"], class_name, link))
+
+                # award badge if this was the user's first class; log success/failure
+                if before_cnt == 0:
+                    try:
+                        awarded = award_badge_to_user('added_class', session['user_id'], c)
+                        if awarded:
+                            app.logger.info("Awarded 'added_class' badge to user_id=%s after adding first class", session.get('user_id'))
+                        else:
+                            app.logger.info("'added_class' badge not awarded (already present or missing) for user_id=%s", session.get('user_id'))
+                    except Exception as e:
+                        app.logger.exception("Error awarding 'added_class' badge for user_id=%s: %s", session.get('user_id'), e)
 
         if IS_POSTGRES:
             c.execute("SELECT * FROM class_links WHERE user_id = %s ORDER BY class_name ASC", (session["user_id"],))
@@ -1174,13 +1472,28 @@ def account():
         else:
             c.execute("SELECT id, username, has_seen_tutorial, is_admin, dark_mode FROM users WHERE id = ?", (session["user_id"],))
         user = c.fetchone()
-
+        # fetch user's earned badges
+        if IS_POSTGRES:
+            c.execute("SELECT b.key, b.name, b.description, b.icon FROM badges b JOIN user_badges ub ON b.id = ub.badge_id WHERE ub.user_id = %s ORDER BY ub.awarded_at DESC", (session["user_id"],))
+        else:
+            c.execute("SELECT b.key, b.name, b.description, b.icon FROM badges b JOIN user_badges ub ON b.id = ub.badge_id WHERE ub.user_id = ? ORDER BY ub.awarded_at DESC", (session["user_id"],))
+        user_badges = c.fetchall()
     try:
         user = dict(user) if user is not None else None
     except Exception:
         pass
 
-    return render_template("account.html", user=user)
+    # normalize rows to list of dicts for template
+    badges_list = []
+    for b in (user_badges or []):
+        badges_list.append({
+            'key': row_val(b, 'key') if isinstance(b, (dict,)) else (b[0] if len(b) > 0 else None),
+            'name': row_val(b, 'name') if isinstance(b, (dict,)) else (b[1] if len(b) > 1 else None),
+            'description': row_val(b, 'description') if isinstance(b, (dict,)) else (b[2] if len(b) > 2 else None),
+            'icon': row_val(b, 'icon') if isinstance(b, (dict,)) else (b[3] if len(b) > 3 else None),
+        })
+
+    return render_template("account.html", user=user, badges=badges_list)
 
 @app.route("/change-password", methods=["GET", "POST"])
 def change_password():
@@ -1981,6 +2294,71 @@ def release_notes(date):
         abort(404)
 
     return render_template(f"release_notes/{date}.html")
+
+
+@app.route('/badges')
+def badges():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    user_id = session['user_id']
+    # fetch all badges and user's earned badges
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute('SELECT id, key, name, description, icon FROM badges ORDER BY id')
+        else:
+            c.execute('SELECT id, key, name, description, icon FROM badges ORDER BY id')
+        badges_all = c.fetchall()
+
+    user_keys = set(get_user_badge_keys(user_id))
+
+    # prepare simple list for template
+    badge_rows = []
+    for b in badges_all:
+        k = row_val(b, 'key')
+        badge_rows.append({
+            'key': k,
+            'name': row_val(b, 'name'),
+            'description': row_val(b, 'description'),
+            'icon': row_val(b, 'icon'),
+            'earned': k in user_keys
+        })
+
+    return render_template('badges.html', badges=badge_rows)
+
+
+@app.route('/award-badge', methods=['POST'])
+def award_badge():
+    if 'user_id' not in session:
+        return jsonify({'ok': False, 'error': 'not_logged_in'}), 403
+    # Accept badge_key from form, JSON body, or query string.
+    data = {}
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+
+    badge_key = (
+        request.form.get('badge_key')
+        or data.get('badge_key')
+        or request.args.get('badge_key')
+    )
+
+    if not badge_key:
+        # if this was a browser form submit, redirect back with a flash message
+        if not request.is_json:
+            flash('Missing badge key.', 'error')
+            return redirect(url_for('badges'))
+        return jsonify({'ok': False, 'error': 'missing_badge_key'}), 400
+
+    awarded = award_badge_to_user(badge_key, session['user_id'])
+
+    # For normal form posts, redirect back to badges page so users see the change.
+    if not request.is_json:
+        if awarded:
+            flash('Badge awarded!', 'success')
+        else:
+            flash('Badge already awarded or not found.', 'info')
+        return redirect(url_for('badges'))
+
+    return jsonify({'ok': True, 'awarded': awarded})
 
 
 if __name__ == "__main__":

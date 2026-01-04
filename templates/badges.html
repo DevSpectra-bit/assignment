@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Badges</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="{% if dark_mode %}bg-gray-900 min-h-screen text-gray-100{% else %}bg-gray-50 min-h-screen text-gray-900{% endif %}">
+  <div class="max-w-4xl mx-auto py-12 px-4">
+    <h1 class="text-2xl font-semibold mb-6 {% if dark_mode %}text-indigo-200{% else %}text-indigo-600{% endif %}">Achievements & Badges</h1>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {% for b in badges %}
+      <div class="p-4 rounded shadow {% if dark_mode %}bg-gray-800{% else %}bg-white{% endif %} flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="text-3xl">{{ b.icon or '🏅' }}</div>
+          <div>
+            <div class="font-medium">{{ b.name }}</div>
+            <div class="text-xs {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %}">{{ b.description }}</div>
+          </div>
+        </div>
+        <div class="text-right leading-tight">
+          {% if b.earned %}
+            <div class="text-sm px-3 py-1 rounded bg-green-600 text-white inline-block">Earned</div>
+          {% else %}
+            <div class="text-sm px-3 py-1 rounded {% if dark_mode %}bg-gray-700 text-gray-200{% else %}bg-gray-100 text-gray-700{% endif %} inline-block">Locked</div>
+          {% endif %}
+          <div class="text-xs mt-2 {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %}">Key: {{ b.key }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="mt-6 text-xs {% if dark_mode %}text-gray-400{% else %}text-gray-500{% endif %}">
+      <p>These badges are a lightweight gamification layer. Descriptions explain how each badge is earned; badges marked "Locked" are awarded automatically when you meet the criteria.</p>
+    </div>
+  </div>
+    {% if badge_popup %}
+    <div id="badge-toast" class="fixed right-6 bottom-6 z-50">
+      <div class="px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 {% if dark_mode %}bg-gray-800 text-gray-100{% else %}bg-white text-gray-900{% endif %}">
+        <div class="text-2xl">{{ badge_popup.icon }}</div>
+        <div>
+          <div class="font-medium">Badge earned: {{ badge_popup.name }}</div>
+          <div class="text-sm text-gray-500">Nice work — keep going!</div>
+        </div>
+        <button id="badge-dismiss" class="ml-3 text-gray-400 hover:text-gray-600">✕</button>
+      </div>
+    </div>
+    <script>
+      (function(){
+        const el = document.getElementById('badge-toast');
+        if(!el) return;
+        const dismiss = document.getElementById('badge-dismiss');
+        function hide(){ el.style.display='none'; }
+        setTimeout(hide, 6000);
+        dismiss.addEventListener('click', hide);
+      })();
+    </script>
+    {% endif %}
+</body>
+</html>
