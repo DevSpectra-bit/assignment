@@ -2300,6 +2300,12 @@ def release_notes(date):
 def badges():
     if 'user_id' not in session:
         return redirect(url_for('login'))
+
+    if not feature_enabled('badges', default=True):
+        if session.get('dev') or session.get('user_id') == -1 or session.get('is_admin') == 1:
+            pass
+        else:
+            return render_template('disabled.html'), 403
     user_id = session['user_id']
     # fetch all badges and user's earned badges
     with db_cursor() as c:
@@ -2330,6 +2336,8 @@ def badges():
 def award_badge():
     if 'user_id' not in session:
         return jsonify({'ok': False, 'error': 'not_logged_in'}), 403
+    if not feature_enabled('badges', default=True):
+        return jsonify({'ok': False, 'error': 'feature_disabled'}), 403
     # Accept badge_key from form, JSON body, or query string.
     data = {}
     if request.is_json:
