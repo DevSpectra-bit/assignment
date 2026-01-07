@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Grade Predictor</title>
+  <title>Grade Outcome Simulator</title>
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
 <body class="{% if dark_mode %}bg-gray-900 min-h-screen font-sans text-gray-100{% else %}bg-gray-50 min-h-screen font-sans text-gray-800{% endif %}">
   <div class="max-w-3xl mx-auto py-16 px-4">
-    <h1 class="text-2xl font-semibold mb-4 {% if dark_mode %}text-indigo-200{% else %}text-indigo-600{% endif %}">Grade Predictor & Projections</h1>
+    <h1 class="text-2xl font-semibold mb-4 {% if dark_mode %}text-indigo-200{% else %}text-indigo-600{% endif %}">Grade Outcome Simulator</h1>
+    <p class="mb-6 {% if dark_mode %}text-gray-300{% else %}text-gray-700{% endif %}">Simulate future assignment scores to see how they affect your average.</p>
 
     {% if error %}
       <div class="mb-4 p-3 {% if dark_mode %}bg-red-900 text-red-200{% else %}bg-red-100 text-red-800{% endif %} rounded">{{ error }}</div>
@@ -85,6 +86,7 @@
       <button id="badge-dismiss" class="ml-3 text-gray-400 hover:text-gray-600">✕</button>
     </div>
   </div>
+  {% endif %}
   <script>
     (function(){
       const el = document.getElementById('badge-toast');

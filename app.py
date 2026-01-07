@@ -1851,22 +1851,28 @@ def add_grade(assignment_id):
     with db_cursor() as c:
         if IS_POSTGRES:
             c.execute("""
-                SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
-                FROM assignments a
-                JOIN class_links cl ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
-                WHERE a.id = %s AND a.user_id = %s
+                SELECT id, user_id, title, cl
+                FROM assignments
+                WHERE id = %s AND user_id = %s
             """, (assignment_id, session["user_id"]))
         else:
             c.execute("""
-                SELECT a.id, a.user_id, a.title, a.cl, cl.id AS class_id
-                FROM assignments a
-                JOIN class_links cl ON TRIM(a.cl) = TRIM(cl.class_name)
-                WHERE a.id = ? AND a.user_id = ?
+                SELECT id, user_id, title, cl
+                FROM assignments
+                WHERE id = ? AND user_id = ?
             """, (assignment_id, session["user_id"]))
+
         assignment = c.fetchone()
 
         if not assignment:
-            return "Assignment not found or unauthorized.", 404
+            if session.get("is_admin"):
+                return (
+                    "Assignment not found. Developer note: check assignment ↔ class mapping "
+                    "and DB loading logic.",
+                    404
+                )
+            return "Assignment not found.", 404
+
 
         if request.method == "POST":
             grade = request.form.get("grade")
