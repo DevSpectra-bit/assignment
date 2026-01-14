@@ -1587,19 +1587,26 @@ def grade_tracker():
             # get assignment ids that belong to this class for this user
             if IS_POSTGRES:
                 c.execute("""
-                    SELECT id
-                    FROM assignments
-                    WHERE user_id = %s
-                      AND LOWER(TRIM(cl)) = LOWER(TRIM(%s))
-                """, (session["user_id"], class_name))
+                    SELECT a.id
+                    FROM assignments a
+                    JOIN class_links cl
+                    ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
+                    WHERE a.user_id = %s
+                    AND cl.id = %s
+                """, (session["user_id"], class_id))
             else:
                 c.execute("""
-                    SELECT id
-                    FROM assignments
-                    WHERE user_id = ? AND TRIM(cl) = TRIM(?)
-                """, (session["user_id"], class_name))
+                    SELECT a.id
+                    FROM assignments a
+                    JOIN class_links cl
+                    ON TRIM(a.cl) = TRIM(cl.class_name)
+                    WHERE a.user_id = ?
+                    AND cl.id = ?
+                """, (session["user_id"], class_id))
             assignment_rows = c.fetchall()
             assignment_ids = [row_val(a, "id") for a in assignment_rows]
+            print("CLASS:", class_name, "ASSIGNMENT IDS:", assignment_ids)
+
 
             assignments_count = len(assignment_ids)
             graded_count = 0
@@ -1618,6 +1625,7 @@ def grade_tracker():
                     c.execute(sql, params)
 
                 grade_rows = c.fetchall()
+                print("GRADE ROWS:", grade_rows)
                 for gr in grade_rows:
                     enc_grade = row_val(gr, "grade")
                     enc_out = row_val(gr, "out_of")
@@ -1894,9 +1902,43 @@ def add_grade(assignment_id):
                     INSERT INTO grades (assignment_id, user_id, grade, out_of)
                     VALUES (?, ?, ?, ?)
                 """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+            try:
+                class_id = row_val(assignment, "class_id")
+                print(f"Got class_id. {class_id}")
+            except Exception as e:
+                print(f"An error occured. {e}")
 
-            class_id = row_val(assignment, "class_id")
-            return redirect(url_for("grade_tracker_class", class_id=class_id))
+            class_id = None
+
+            assignment_class = assignment[3]  # this is `cl`
+
+            if IS_POSTGRES:
+                c.execute("""
+                    SELECT id
+                    FROM class_links
+                    WHERE user_id = %s
+                    AND LOWER(TRIM(class_name)) = LOWER(TRIM(%s))
+                """, (session["user_id"], assignment[3]))
+            else:
+                c.execute("""
+                    SELECT id
+                    FROM class_links
+                    WHERE user_id = ?
+                    AND LOWER(TRIM(class_name)) = LOWER(TRIM(?))
+                """, (session["user_id"], assignment[3]))
+
+
+            row = c.fetchone()
+            class_id = row[0] if row else None
+            print("DEBUG — assignment cl:", assignment[3])
+            print("DEBUG — resolved class_id:", class_id)
+
+
+            if class_id is not None:
+                return redirect(url_for("grade_tracker_class", class_id=class_id))
+            else:
+                return redirect(url_for("grade_tracker"))
+
 
     return render_template("add_grade.html", assignment=assignment)
 
