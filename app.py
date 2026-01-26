@@ -539,7 +539,7 @@ def inject_badge_popup():
     return {'badge_popup': popup}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2026-01-05"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2026-01-26"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
