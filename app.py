@@ -165,6 +165,23 @@ def decrypt_grade_safe(token):
     except Exception:
         return None
 
+def user_has_badge(badge_key, user_id):
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                "SELECT 1 FROM user_badges WHERE user_id = %s AND badge_key = %s LIMIT 1",
+                (user_id, badge_key)
+            )
+        else:
+            c.execute(
+                "SELECT 1 FROM user_badges WHERE user_id = ? AND badge_key = ? LIMIT 1",
+                (user_id, badge_key)
+            )
+
+        row = c.fetchone()
+        return row is not None
+
+
 # --- DB setup ---
 def init_db():
     with db_cursor() as c:
@@ -1139,38 +1156,29 @@ def submit_assignment(id):
     if "user_id" not in session:
         return redirect(url_for("login"))
 
+    # mark assignment as submitted
     with db_cursor() as c:
         if IS_POSTGRES:
-            c.execute("UPDATE assignments SET submitted = TRUE WHERE id = %s AND user_id = %s", (id, session["user_id"]))
+            c.execute(
+                "UPDATE assignments SET submitted = TRUE WHERE id = %s AND user_id = %s",
+                (id, session["user_id"])
+            )
         else:
-            c.execute("UPDATE assignments SET submitted = 1 WHERE id = ? AND user_id = ?", (id, session["user_id"]))
+            c.execute(
+                "UPDATE assignments SET submitted = 1 WHERE id = ? AND user_id = ?",
+                (id, session["user_id"])
+            )
 
-    # after marking submitted, check if this is the user's first submitted assignment
+    # award badge if user doesn't already have it (this route is the trigger)
     try:
-        with db_cursor() as c:
-            if IS_POSTGRES:
-                c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = %s AND submitted = TRUE", (session["user_id"],))
-            else:
-                c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = ? AND submitted = 1", (session["user_id"],))
-            row = c.fetchone()
-            try:
-                submitted_cnt = int(row_val(row, "cnt") or 0)
-            except Exception:
-                try:
-                    submitted_cnt = int(list(row)[0])
-                except Exception:
-                    submitted_cnt = 0
-
-        if submitted_cnt == 1:
-            try:
-                award_badge_to_user('submitted_assignment', session['user_id'])
-            except Exception:
-                pass
+        if not user_has_badge('submitted_assignment', session['user_id']):
+            award_badge_to_user('submitted_assignment', session['user_id'])
     except Exception:
         pass
 
     flash("Assignment marked as submitted!", "success")
     return redirect(url_for("index"))
+
 
 # --- CLASS LINKS (per-user) ---
 @app.route("/classes", methods=["GET", "POST"])
