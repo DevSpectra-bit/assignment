@@ -13,8 +13,6 @@ from contextlib import contextmanager
 from typing import Iterator
 from math import isfinite
 import re
-from datetime import timedelta
-
 from zoneinfo import ZoneInfo
 
 APP_TIMEZONE = ZoneInfo("America/Chicago")
@@ -1237,24 +1235,6 @@ def api_assignments():
     return jsonify({
         "success": True,
         "assignments": assignments
-    })
-
-@app.route("/api/me", methods=["GET"])
-def api_me():
-    if "user_id" not in session:
-        return jsonify({
-            "success": False,
-            "authenticated": False
-        }), 401
-
-    return jsonify({
-        "success": True,
-        "authenticated": True,
-        "user": {
-            "id": session["user_id"],
-            "username": session.get("username"),
-            "is_admin": bool(session.get("is_admin", 0))
-        }
     })
 
 @app.route("/add", methods=["POST"])
