@@ -1,6 +1,6 @@
 # app.py — cleaned version (maintenance logic removed, shared DB helpers, kept all features)
 from flask import Flask, render_template, request, redirect, url_for, session, flash, current_app, jsonify, abort
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -13,12 +13,21 @@ from contextlib import contextmanager
 from typing import Iterator
 from math import isfinite
 import re
+from zoneinfo import ZoneInfo
+
+APP_TIMEZONE = ZoneInfo("America/Chicago")
 
 # Load .env if available
 load_dotenv()
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+if os.environ.get("RENDER"):
+    app.config["SESSION_COOKIE_SECURE"] = True
 
 # try loading config.py if present
 try:
@@ -556,7 +565,7 @@ def inject_badge_popup():
     return {'badge_popup': popup}
 
 # --- UPDATES helpers ---
-UPDATES_VERSION = "2026-01-26"  # Change this string whenever updates.html changes
+UPDATES_VERSION = "2026-09-05"  # Change this string whenever updates.html changes
 
 def should_show_updates(user_id):
     """Return True if user should see updates.html (hasn't seen current version)."""
@@ -949,9 +958,7 @@ def login():
             else:
                 c.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username,))
             user = c.fetchone()
-            # print debug row as dict (works for sqlite3.Row and RealDictRow)
-            print("DEBUG USER ROW:", dict(user) if user is not None else None)
-
+           
         if user:
             stored_pw = row_val(user, "password")
             if stored_pw and check_password_hash(stored_pw, password):
@@ -1021,11 +1028,80 @@ def login():
         flash("❌ Invalid username or password.")
     return render_template("login.html")
 
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json(silent=True) or {}
+
+    username = str(data.get("username", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    if not username or not password:
+        return jsonify({
+            "success": False,
+            "error": "Username and password are required."
+        }), 400
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                "SELECT * FROM users WHERE LOWER(username) = LOWER(%s)",
+                (username,)
+            )
+        else:
+            c.execute(
+                "SELECT * FROM users WHERE LOWER(username) = LOWER(?)",
+                (username,)
+            )
+
+        user = c.fetchone()
+
+    if not user:
+        return jsonify({
+            "success": False,
+            "error": "Invalid username or password."
+        }), 401
+
+    stored_pw = row_val(user, "password")
+
+    if not stored_pw or not check_password_hash(stored_pw, password):
+        return jsonify({
+            "success": False,
+            "error": "Invalid username or password."
+        }), 401
+
+    user_id = int(row_val(user, "id"))
+
+    user_id = int(row_val(user, "id"))
+
+    session.clear()
+    session.permanent = True
+
+    session["user_id"] = user_id
+    session["username"] = row_val(user, "username")
+    session["is_admin"] = row_val(user, "is_admin") or 0
+
+    return jsonify({
+        "success": True,
+        "user": {
+            "id": user_id,
+            "username": row_val(user, "username"),
+            "is_admin": bool(row_val(user, "is_admin") or 0)
+        }
+    })
+
 @app.route("/logout")
 def logout():
     session.clear()
     flash("👋 Logged out.")
     return redirect(url_for("login"))
+
+@app.route("/api/logout", methods=["POST"])
+def api_logout():
+    session.clear()
+
+    return jsonify({
+        "success": True
+    })
 
 # --- ASSIGNMENTS ---
 @app.route("/")
@@ -1052,7 +1128,7 @@ def index():
             c.execute("SELECT * FROM assignments WHERE user_id = ? ORDER BY submitted ASC, due_date ASC", (session["user_id"],))
         rows = c.fetchall()
 
-    today = datetime.now().date()
+    today = datetime.now(APP_TIMEZONE).date()
     annotated = []
     for r in rows:
         try:
@@ -1084,6 +1160,96 @@ def index():
         })
 
     return render_template("index.html", assignments=annotated)
+
+@app.route("/api/assignments", methods=["GET"])
+def api_assignments():
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    user_id = session["user_id"]
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT id, title, cl, due_date, notes, submitted
+                FROM assignments
+                WHERE user_id = %s
+                ORDER BY submitted ASC, due_date ASC
+            """, (user_id,))
+        else:
+            c.execute("""
+                SELECT id, title, cl, due_date, notes, submitted
+                FROM assignments
+                WHERE user_id = ?
+                ORDER BY submitted ASC, due_date ASC
+            """, (user_id,))
+
+        rows = c.fetchall()
+
+    today = datetime.now(APP_TIMEZONE).date()
+    assignments = []
+
+    for r in rows:
+        row = dict(r)
+
+        try:
+            due_date = date.fromisoformat(
+                str(row["due_date"]).split(" ")[0]
+            )
+        except (ValueError, TypeError):
+            continue
+
+        submitted_val = row.get("submitted", False)
+
+        try:
+            submitted = (
+                bool(int(submitted_val))
+                if str(submitted_val) in ("0", "1")
+                else bool(submitted_val)
+            )
+        except Exception:
+            submitted = bool(submitted_val)
+
+        days_left = (due_date - today).days
+
+        assignments.append({
+            "id": int(row["id"]),
+            "title": row.get("title") or "",
+            "class": row.get("cl") or "",
+            "due_date": due_date.isoformat(),
+            "notes": row.get("notes") or "",
+            "submitted": submitted,
+            "days_left": days_left,
+            "is_past_due": days_left < 0,
+            "is_due_today": days_left == 0,
+            "is_due_tomorrow": days_left == 1,
+        })
+
+    return jsonify({
+        "success": True,
+        "assignments": assignments
+    })
+
+@app.route("/api/me", methods=["GET"])
+def api_me():
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "authenticated": False
+        }), 401
+
+    return jsonify({
+        "success": True,
+        "authenticated": True,
+        "user": {
+            "id": session["user_id"],
+            "username": session.get("username"),
+            "is_admin": bool(session.get("is_admin", 0))
+        }
+    })
 
 @app.route("/add", methods=["POST"])
 def add():
