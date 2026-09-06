@@ -13,9 +13,12 @@ from contextlib import contextmanager
 from typing import Iterator
 from math import isfinite
 import re
+from datetime import timedelta
+
 from zoneinfo import ZoneInfo
 
 APP_TIMEZONE = ZoneInfo("America/Chicago")
+
 
 # Load .env if available
 load_dotenv()
@@ -25,6 +28,9 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
+    days=30
+)
 
 if os.environ.get("RENDER"):
     app.config["SESSION_COOKIE_SECURE"] = True
@@ -2019,6 +2025,25 @@ def api_classes():
         "classes": classes
     })
 
+@app.route("/api/me", methods=["GET"])
+def api_me():
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "authenticated": False
+        }), 401
+
+    return jsonify({
+        "authenticated": True,
+        "user": {
+            "id": user_id,
+            "username": session.get("username"),
+            "is_admin": bool(
+                session.get("is_admin", 0)
+            )
+        }
+    })
 @app.route("/tutorial")
 def tutorial():
     if "user_id" not in session:
