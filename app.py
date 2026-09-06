@@ -1499,6 +1499,526 @@ def edit_assignment(id):
 
     return render_template("edit.html", assignment=assignment)
 
+# =========================================================
+# MOBILE API - ADD ASSIGNMENT
+# =========================================================
+
+@app.route("/api/assignments", methods=["POST"])
+def api_add_assignment():
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    data = request.get_json(silent=True) or {}
+
+    title = str(data.get("title", "")).strip()
+    cl = str(data.get("class", "")).strip()
+    due_date = str(data.get("due_date", "")).strip()
+    notes = str(data.get("notes", "")).strip()
+
+    if not title or not cl or not due_date:
+        return jsonify({
+            "success": False,
+            "error": "Title, class and due date are required."
+        }), 400
+
+    # Make sure the date is actually valid.
+    try:
+        parsed_due_date = date.fromisoformat(due_date)
+        due_date = parsed_due_date.isoformat()
+    except (ValueError, TypeError):
+        return jsonify({
+            "success": False,
+            "error": "Invalid due date."
+        }), 400
+
+    user_id = session["user_id"]
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                INSERT INTO assignments
+                    (user_id, title, cl, due_date, notes)
+                VALUES
+                    (%s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+            )
+
+            inserted = c.fetchone()
+
+            try:
+                assignment_id = int(row_val(inserted, "id"))
+            except Exception:
+                assignment_id = int(list(inserted)[0])
+
+        else:
+            c.execute(
+                """
+                INSERT INTO assignments
+                    (user_id, title, cl, due_date, notes)
+                VALUES
+                    (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+            )
+
+            assignment_id = c.lastrowid
+
+    # Same badge behavior as the website /add route.
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM assignments
+                WHERE user_id = %s
+                """,
+                (user_id,)
+            )
+        else:
+            c.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM assignments
+                WHERE user_id = ?
+                """,
+                (user_id,)
+            )
+
+        row = c.fetchone()
+
+        try:
+            cnt = int(row_val(row, "cnt") or 0)
+        except Exception:
+            try:
+                cnt = int(list(row)[0])
+            except Exception:
+                cnt = 0
+
+    if cnt == 1:
+        try:
+            award_badge_to_user(
+                "first_assignment",
+                user_id
+            )
+        except Exception:
+            pass
+
+    elif cnt == 5:
+        try:
+            award_badge_to_user(
+                "five_assignments",
+                user_id
+            )
+        except Exception:
+            pass
+
+    return jsonify({
+        "success": True,
+        "assignment": {
+            "id": assignment_id,
+            "title": title,
+            "class": cl,
+            "due_date": due_date,
+            "notes": notes,
+            "submitted": False
+        }
+    }), 201
+
+# =========================================================
+# MOBILE API - EDIT ASSIGNMENT
+# =========================================================
+
+@app.route("/api/assignments/<int:id>", methods=["PUT"])
+def api_edit_assignment(id):
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    if not feature_enabled(
+        "edit_assignment",
+        default=True
+    ):
+        if (
+            session.get("dev")
+            or session.get("user_id") == -1
+            or session.get("is_admin") == 1
+        ):
+            pass
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Assignment editing is currently disabled."
+            }), 403
+
+    data = request.get_json(silent=True) or {}
+
+    title = str(data.get("title", "")).strip()
+    cl = str(data.get("class", "")).strip()
+    due_date = str(data.get("due_date", "")).strip()
+    notes = str(data.get("notes", "")).strip()
+
+    if not title or not cl or not due_date:
+        return jsonify({
+            "success": False,
+            "error": "Title, class and due date are required."
+        }), 400
+
+    try:
+        parsed_due_date = date.fromisoformat(due_date)
+        due_date = parsed_due_date.isoformat()
+    except (ValueError, TypeError):
+        return jsonify({
+            "success": False,
+            "error": "Invalid due date."
+        }), 400
+
+    user_id = session["user_id"]
+
+    # First make sure it actually belongs to this user.
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (id, user_id)
+            )
+        else:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (id, user_id)
+            )
+
+        existing = c.fetchone()
+
+    if not existing:
+        return jsonify({
+            "success": False,
+            "error": "Assignment not found."
+        }), 404
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                UPDATE assignments
+                SET title = %s,
+                    cl = %s,
+                    due_date = %s,
+                    notes = %s
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (
+                    title,
+                    cl,
+                    due_date,
+                    notes,
+                    id,
+                    user_id
+                )
+            )
+        else:
+            c.execute(
+                """
+                UPDATE assignments
+                SET title = ?,
+                    cl = ?,
+                    due_date = ?,
+                    notes = ?
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (
+                    title,
+                    cl,
+                    due_date,
+                    notes,
+                    id,
+                    user_id
+                )
+            )
+
+    return jsonify({
+        "success": True,
+        "assignment": {
+            "id": id,
+            "title": title,
+            "class": cl,
+            "due_date": due_date,
+            "notes": notes
+        }
+    })
+
+# =========================================================
+# MOBILE API - SUBMIT / UNSUBMIT ASSIGNMENT
+# =========================================================
+
+@app.route(
+    "/api/assignments/<int:id>/complete",
+    methods=["POST"]
+)
+def api_submit_assignment(id):
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    data = request.get_json(silent=True) or {}
+
+    submitted = data.get("submitted", True)
+
+    if not isinstance(submitted, bool):
+        return jsonify({
+            "success": False,
+            "error": "'submitted' must be true or false."
+        }), 400
+
+    user_id = session["user_id"]
+
+    # Verify ownership first.
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (id, user_id)
+            )
+        else:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (id, user_id)
+            )
+
+        existing = c.fetchone()
+
+    if not existing:
+        return jsonify({
+            "success": False,
+            "error": "Assignment not found."
+        }), 404
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                UPDATE assignments
+                SET submitted = %s
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (
+                    submitted,
+                    id,
+                    user_id
+                )
+            )
+        else:
+            c.execute(
+                """
+                UPDATE assignments
+                SET submitted = ?
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (
+                    1 if submitted else 0,
+                    id,
+                    user_id
+                )
+            )
+
+    # Match the website's badge behavior.
+    #
+    # Only award it when marking something submitted,
+    # NOT when un-submitting it.
+    if submitted:
+        try:
+            if not user_has_badge(
+                "submitted_assignment",
+                user_id
+            ):
+                award_badge_to_user(
+                    "submitted_assignment",
+                    user_id
+                )
+        except Exception:
+            pass
+
+    return jsonify({
+        "success": True,
+        "assignment_id": id,
+        "submitted": submitted
+    })
+
+# =========================================================
+# MOBILE API - DELETE ASSIGNMENT
+# =========================================================
+
+@app.route(
+    "/api/assignments/<int:id>",
+    methods=["DELETE"]
+)
+def api_delete_assignment(id):
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    user_id = session["user_id"]
+
+    # Verify ownership before deleting so we can return
+    # a useful 404 instead of always saying success.
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (id, user_id)
+            )
+        else:
+            c.execute(
+                """
+                SELECT id
+                FROM assignments
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (id, user_id)
+            )
+
+        existing = c.fetchone()
+
+    if not existing:
+        return jsonify({
+            "success": False,
+            "error": "Assignment not found."
+        }), 404
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                DELETE FROM assignments
+                WHERE id = %s
+                  AND user_id = %s
+                """,
+                (id, user_id)
+            )
+        else:
+            c.execute(
+                """
+                DELETE FROM assignments
+                WHERE id = ?
+                  AND user_id = ?
+                """,
+                (id, user_id)
+            )
+
+    return jsonify({
+        "success": True,
+        "assignment_id": id
+    })
+
+# =========================================================
+# MOBILE API - USER CLASSES
+# =========================================================
+
+@app.route("/api/classes", methods=["GET"])
+def api_classes():
+    if "user_id" not in session:
+        return jsonify({
+            "success": False,
+            "error": "Not authenticated."
+        }), 401
+
+    user_id = session["user_id"]
+
+    with db_cursor() as c:
+        if IS_POSTGRES:
+            c.execute(
+                """
+                SELECT id, class_name, link
+                FROM class_links
+                WHERE user_id = %s
+                ORDER BY class_name ASC
+                """,
+                (user_id,)
+            )
+        else:
+            c.execute(
+                """
+                SELECT id, class_name, link
+                FROM class_links
+                WHERE user_id = ?
+                ORDER BY class_name ASC
+                """,
+                (user_id,)
+            )
+
+        rows = c.fetchall()
+
+    classes = []
+
+    for row in rows:
+        classes.append({
+            "id": int(row_val(row, "id")),
+            "class_name": str(
+                row_val(row, "class_name") or ""
+            ),
+            "link": str(
+                row_val(row, "link") or ""
+            )
+        })
+
+    return jsonify({
+        "success": True,
+        "classes": classes
+    })
+
 @app.route("/tutorial")
 def tutorial():
     if "user_id" not in session:
