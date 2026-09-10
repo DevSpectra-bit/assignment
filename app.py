@@ -2557,6 +2557,7 @@ def add_grade(assignment_id):
         return redirect(url_for("login"))
 
     with db_cursor() as c:
+        # Get the assignment and make sure it belongs to this user
         if IS_POSTGRES:
             c.execute("""
                 SELECT id, user_id, title, cl
@@ -2579,8 +2580,8 @@ def add_grade(assignment_id):
                     "and DB loading logic.",
                     404
                 )
-            return "Assignment not found.", 404
 
+            return "Assignment not found.", 404
 
         if request.method == "POST":
             grade = request.form.get("grade")
@@ -2589,59 +2590,99 @@ def add_grade(assignment_id):
             if not grade or not out_of:
                 return "Missing fields", 400
 
-            encrypted_grade = encrypt_grade(float(grade))
-            encrypted_out_of = encrypt_grade(float(out_of))
+            try:
+                grade_value = float(grade)
+                out_of_value = float(out_of)
+            except (TypeError, ValueError):
+                return "Grade and out-of values must be numbers.", 400
 
+            if out_of_value <= 0:
+                return "Out-of value must be greater than zero.", 400
+
+            encrypted_grade = encrypt_grade(grade_value)
+            encrypted_out_of = encrypt_grade(out_of_value)
+
+            # Save grade
             if IS_POSTGRES:
                 c.execute("""
-                    INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                    INSERT INTO grades (
+                        assignment_id,
+                        user_id,
+                        grade,
+                        out_of
+                    )
                     VALUES (%s, %s, %s, %s)
-                """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
+                """, (
+                    assignment_id,
+                    session["user_id"],
+                    encrypted_grade,
+                    encrypted_out_of
+                ))
             else:
                 c.execute("""
-                    INSERT INTO grades (assignment_id, user_id, grade, out_of)
+                    INSERT INTO grades (
+                        assignment_id,
+                        user_id,
+                        grade,
+                        out_of
+                    )
                     VALUES (?, ?, ?, ?)
-                """, (assignment_id, session["user_id"], encrypted_grade, encrypted_out_of))
-            try:
-                class_id = row_val(assignment, "class_id")
-                print(f"Got class_id. {class_id}")
-            except Exception as e:
-                print(f"An error occured. {e}")
+                """, (
+                    assignment_id,
+                    session["user_id"],
+                    encrypted_grade,
+                    encrypted_out_of
+                ))
 
-            class_id = None
+            # The assignment stores the class name in `cl`
+            assignment_class = row_val(assignment, "cl")
 
-            assignment_class = assignment[4]  # this is `cl`
+            print("DEBUG — assignment cl:", assignment_class)
 
+            # Find the corresponding class_links row so we can redirect
+            # back to that class's grade tracker.
             if IS_POSTGRES:
                 c.execute("""
                     SELECT id
                     FROM class_links
                     WHERE user_id = %s
-                    AND LOWER(TRIM(class_name)) = LOWER(TRIM(%s))
-                """, (session["user_id"], assignment[3]))
+                      AND LOWER(TRIM(class_name)) = LOWER(TRIM(%s))
+                """, (
+                    session["user_id"],
+                    assignment_class
+                ))
             else:
                 c.execute("""
                     SELECT id
                     FROM class_links
                     WHERE user_id = ?
-                    AND LOWER(TRIM(class_name)) = LOWER(TRIM(?))
-                """, (session["user_id"], assignment[3]))
+                      AND LOWER(TRIM(class_name)) = LOWER(TRIM(?))
+                """, (
+                    session["user_id"],
+                    assignment_class
+                ))
 
+            class_row = c.fetchone()
 
-            row = c.fetchone()
-            class_id = row[0] if row else None
-            print("DEBUG — assignment cl:", assignment[3])
+            class_id = row_val(class_row, "id") if class_row else None
+
             print("DEBUG — resolved class_id:", class_id)
 
-
             if class_id is not None:
-                return redirect(url_for("grade_tracker_class", class_id=class_id))
-            else:
-                return redirect(url_for("grade_tracker"))
+                return redirect(
+                    url_for(
+                        "grade_tracker_class",
+                        class_id=class_id
+                    )
+                )
 
+            return redirect(url_for("grade_tracker"))
 
-    return render_template("add_grade.html", assignment=assignment)
-
+    return render_template(
+        "add_grade.html",
+        assignment=assignment
+    )
+    
 @app.route("/submitted-assignments")
 def submitted_assignments():
     if "user_id" not in session:
