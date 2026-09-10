@@ -2418,6 +2418,7 @@ def grade_tracker_class(class_id):
         # Normalize class name for lookup
         class_name_norm = class_name.strip().lower()
         print("DEBUG class_name_norm:", class_name_norm)
+        
 
         # ---------------------------------------------------------
         # 2) Get ASSIGNMENTS for this class
@@ -2609,7 +2610,7 @@ def add_grade(assignment_id):
 
             class_id = None
 
-            assignment_class = assignment[3]  # this is `cl`
+            assignment_class = assignment[5]  # this is `cl`
 
             if IS_POSTGRES:
                 c.execute("""
