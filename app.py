@@ -2610,7 +2610,7 @@ def add_grade(assignment_id):
 
             class_id = None
 
-            assignment_class = assignment[5]  # this is `cl`
+            assignment_class = assignment[4]  # this is `cl`
 
             if IS_POSTGRES:
                 c.execute("""
