@@ -3157,7 +3157,7 @@ def award_badge():
 
     return jsonify({'ok': True, 'awarded': awarded})
 
-@app.route("/health", methods=[GET])
+@app.route("/health", methods=['GET'])
 def health():
     return "OK", 200
 
