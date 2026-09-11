@@ -119,17 +119,20 @@ def row_val(row, key):
 # --- Grade Encryption Helpers ---
 
 def load_grade_key():
-    """Load or create encryption key for grades."""
-    key_file = "secret.key"
-    if os.path.exists(key_file):
-        with open(key_file, "rb") as f:
-            return f.read()
-    key = Fernet.generate_key()
-    with open(key_file, "wb") as f:
-        f.write(key)
-    return key
+    """Load grade encryption key from environment."""
+
+    env_key = os.environ.get("GRADE_ENCRYPTION_KEY")
+
+    if not env_key:
+        raise RuntimeError(
+            "GRADE_ENCRYPTION_KEY environment variable is not set."
+        )
+
+    return env_key.encode()
+
 
 GRADE_CIPHER = Fernet(load_grade_key())
+
 
 def encrypt_grade(value: float) -> bytes:
     """Encrypt a float → bytes."""
