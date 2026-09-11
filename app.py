@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import ThreadedConnectionPool
 import sqlite3
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -73,48 +74,74 @@ def feature_enabled(key: str, default: bool = True) -> bool:
 DATABASE_URL = os.environ.get("DATABASE_URL")
 IS_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
-# --- DB helpers ---
+POSTGRES_POOL = None
+
+if IS_POSTGRES:
+    POSTGRES_POOL = ThreadedConnectionPool(
+        minconn=1,
+        maxconn=10,
+        dsn=DATABASE_URL,
+        cursor_factory=RealDictCursor
+    )
+
+
 def get_connection():
-    """Return a DB connection. Postgres -> psycopg2 (RealDictCursor), else sqlite3."""
+    """Get a database connection from the pool or local SQLite."""
     if IS_POSTGRES:
-        return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return POSTGRES_POOL.getconn()
+
     conn = sqlite3.connect("assignments.db")
     conn.row_factory = sqlite3.Row
+
     try:
-        # Use WAL mode and a small busy timeout to reduce "database is locked" errors under concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=2000;")
     except Exception:
         pass
+
     return conn
+
+
+def release_connection(conn):
+    """Return Postgres connections to the pool, or close SQLite."""
+    if IS_POSTGRES:
+        POSTGRES_POOL.putconn(conn)
+    else:
+        conn.close()
+
 
 @contextmanager
 def db_cursor() -> Iterator:
-    """
-    Context manager that yields a cursor and ensures commit/rollback and close.
-    Use for both read and write operations. Keeps behavior consistent with previous code.
-    """
     conn = get_connection()
     cur = conn.cursor()
+
     try:
         yield cur
-        # commit where needed; harmless for pure selects on most DBs
+
         try:
             conn.commit()
         except Exception:
-            # some read-only contexts or special cursors might not support commit
             pass
+
     except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
+
         raise
+
     finally:
         try:
-            conn.close()
+            cur.close()
         except Exception:
             pass
+
+        try:
+            release_connection(conn)
+        except Exception:
+            pass
+
 
 def row_val(row, key):
     """Get value from either dict-like (Postgres RealDict) or sqlite3.Row.
@@ -540,23 +567,9 @@ ensure_default_badges()
 # --- Context processors & helpers ---
 @app.context_processor
 def inject_dark_mode():
-    """Make current user's dark mode preference available to templates as `dark_mode`."""
-    dark = False
-    if session.get("user_id"):
-        with db_cursor() as c:
-            if IS_POSTGRES:
-                c.execute("SELECT dark_mode FROM users WHERE id = %s", (session["user_id"],))
-            else:
-                c.execute("SELECT dark_mode FROM users WHERE id = ?", (session["user_id"],))
-            r = c.fetchone()
-            val = row_val(r, "dark_mode")
-            if val is not None:
-                try:
-                    dark = bool(int(val)) if str(val) in ("0", "1") else bool(val)
-                except Exception:
-                    dark = bool(val)
-    return {"dark_mode": dark}
-
+    return {
+        "dark_mode": bool(session.get("dark_mode", False))
+    }
 
 @app.context_processor
 def inject_badge_popup():
@@ -970,6 +983,15 @@ def login():
                     session["user_id"] = user_id
                     session["username"] = row_val(user, "username")
                     session["is_admin"] = row_val(user, "is_admin") or 0
+                    dark_mode_value = row_val(user, "dark_mode")
+                    try:
+                        session["dark_mode"] = (
+                            bool(int(dark_mode_value))
+                            if str(dark_mode_value) in ("0", "1")
+                            else bool(dark_mode_value)
+                        )
+                    except Exception:
+                        session["dark_mode"] = bool(dark_mode_value)
 
                     # update last_active and streak_count for login streaks
                     today = date.today()
@@ -1083,6 +1105,15 @@ def api_login():
     session["user_id"] = user_id
     session["username"] = row_val(user, "username")
     session["is_admin"] = row_val(user, "is_admin") or 0
+    dark_mode_value = row_val(user, "dark_mode")
+    try:
+        session["dark_mode"] = (
+        bool(int(dark_mode_value))
+        if str(dark_mode_value) in ("0", "1")
+        else bool(dark_mode_value)
+        )
+    except Exception:
+        session["dark_mode"] = bool(dark_mode_value)
 
     return jsonify({
         "success": True,
@@ -1251,25 +1282,74 @@ def add():
         flash("Title, class and due date are required.")
         return redirect(url_for("index"))
 
+    user_id = session["user_id"]
+
     with db_cursor() as c:
+        # Insert assignment
         if IS_POSTGRES:
             c.execute(
-                "INSERT INTO assignments (user_id, title, cl, due_date, notes) VALUES (%s, %s, %s, %s, %s)",
-                (session["user_id"], title, cl, due_date, notes)
-            )
-        else:
-            c.execute(
-                "INSERT INTO assignments (user_id, title, cl, due_date, notes) VALUES (?, ?, ?, ?, ?)",
-                (session["user_id"], title, cl, due_date, notes)
+                """
+                INSERT INTO assignments (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
             )
 
-    # After insert, check if this is the user's first assignment and award badge
-    with db_cursor() as c:
-        if IS_POSTGRES:
-            c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = %s", (session["user_id"],))
+            # Get assignment count using SAME cursor/connection
+            c.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM assignments
+                WHERE user_id = %s
+                """,
+                (user_id,)
+            )
+
         else:
-            c.execute("SELECT COUNT(1) as cnt FROM assignments WHERE user_id = ?", (session["user_id"],))
+            c.execute(
+                """
+                INSERT INTO assignments (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+            )
+
+            # Get assignment count using SAME cursor/connection
+            c.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM assignments
+                WHERE user_id = ?
+                """,
+                (user_id,)
+            )
+
         row = c.fetchone()
+
         try:
             cnt = int(row_val(row, "cnt") or 0)
         except Exception:
@@ -1278,19 +1358,26 @@ def add():
             except Exception:
                 cnt = 0
 
-    if cnt == 1:
+        # Award badges using the SAME cursor/connection too
         try:
-            award_badge_to_user('first_assignment', session['user_id'])
-        except Exception:
-            pass
-    elif cnt == 5:
-        try:
-            award_badge_to_user('five_assignments', session['user_id'])
+            if cnt == 1:
+                award_badge_to_user(
+                    "first_assignment",
+                    user_id,
+                    c
+                )
+
+            elif cnt == 5:
+                award_badge_to_user(
+                    "five_assignments",
+                    user_id,
+                    c
+                )
+
         except Exception:
             pass
 
     return redirect(url_for("index"))
-
 @app.route("/delete/<int:id>", methods=["POST"])
 def delete(id):
     if "user_id" not in session:
@@ -1510,10 +1597,10 @@ def api_add_assignment():
             "error": "Title, class and due date are required."
         }), 400
 
-    # Make sure the date is actually valid.
     try:
         parsed_due_date = date.fromisoformat(due_date)
         due_date = parsed_due_date.isoformat()
+
     except (ValueError, TypeError):
         return jsonify({
             "success": False,
@@ -1522,14 +1609,19 @@ def api_add_assignment():
 
     user_id = session["user_id"]
 
+    # Everything happens on the same connection/cursor.
     with db_cursor() as c:
         if IS_POSTGRES:
             c.execute(
                 """
-                INSERT INTO assignments
-                    (user_id, title, cl, due_date, notes)
-                VALUES
-                    (%s, %s, %s, %s, %s)
+                INSERT INTO assignments (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+                VALUES (%s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -1542,19 +1634,30 @@ def api_add_assignment():
             )
 
             inserted = c.fetchone()
+            assignment_id = int(
+                row_val(inserted, "id")
+            )
 
-            try:
-                assignment_id = int(row_val(inserted, "id"))
-            except Exception:
-                assignment_id = int(list(inserted)[0])
+            c.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM assignments
+                WHERE user_id = %s
+                """,
+                (user_id,)
+            )
 
         else:
             c.execute(
                 """
-                INSERT INTO assignments
-                    (user_id, title, cl, due_date, notes)
-                VALUES
-                    (?, ?, ?, ?, ?)
+                INSERT INTO assignments (
+                    user_id,
+                    title,
+                    cl,
+                    due_date,
+                    notes
+                )
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
@@ -1567,18 +1670,6 @@ def api_add_assignment():
 
             assignment_id = c.lastrowid
 
-    # Same badge behavior as the website /add route.
-    with db_cursor() as c:
-        if IS_POSTGRES:
-            c.execute(
-                """
-                SELECT COUNT(1) AS cnt
-                FROM assignments
-                WHERE user_id = %s
-                """,
-                (user_id,)
-            )
-        else:
             c.execute(
                 """
                 SELECT COUNT(1) AS cnt
@@ -1598,21 +1689,22 @@ def api_add_assignment():
             except Exception:
                 cnt = 0
 
-    if cnt == 1:
+        # Use the SAME cursor for badges.
         try:
-            award_badge_to_user(
-                "first_assignment",
-                user_id
-            )
-        except Exception:
-            pass
+            if cnt == 1:
+                award_badge_to_user(
+                    "first_assignment",
+                    user_id,
+                    c
+                )
 
-    elif cnt == 5:
-        try:
-            award_badge_to_user(
-                "five_assignments",
-                user_id
-            )
+            elif cnt == 5:
+                award_badge_to_user(
+                    "five_assignments",
+                    user_id,
+                    c
+                )
+
         except Exception:
             pass
 
@@ -1627,7 +1719,6 @@ def api_add_assignment():
             "submitted": False
         }
     }), 201
-
 # =========================================================
 # MOBILE API - EDIT ASSIGNMENT
 # =========================================================
@@ -1672,6 +1763,7 @@ def api_edit_assignment(id):
     try:
         parsed_due_date = date.fromisoformat(due_date)
         due_date = parsed_due_date.isoformat()
+
     except (ValueError, TypeError):
         return jsonify({
             "success": False,
@@ -1679,37 +1771,6 @@ def api_edit_assignment(id):
         }), 400
 
     user_id = session["user_id"]
-
-    # First make sure it actually belongs to this user.
-    with db_cursor() as c:
-        if IS_POSTGRES:
-            c.execute(
-                """
-                SELECT id
-                FROM assignments
-                WHERE id = %s
-                  AND user_id = %s
-                """,
-                (id, user_id)
-            )
-        else:
-            c.execute(
-                """
-                SELECT id
-                FROM assignments
-                WHERE id = ?
-                  AND user_id = ?
-                """,
-                (id, user_id)
-            )
-
-        existing = c.fetchone()
-
-    if not existing:
-        return jsonify({
-            "success": False,
-            "error": "Assignment not found."
-        }), 404
 
     with db_cursor() as c:
         if IS_POSTGRES:
@@ -1732,6 +1793,7 @@ def api_edit_assignment(id):
                     user_id
                 )
             )
+
         else:
             c.execute(
                 """
@@ -1752,6 +1814,15 @@ def api_edit_assignment(id):
                     user_id
                 )
             )
+
+        updated_rows = c.rowcount
+
+    # Nothing matched id + user_id.
+    if updated_rows == 0:
+        return jsonify({
+            "success": False,
+            "error": "Assignment not found."
+        }), 404
 
     return jsonify({
         "success": True,
@@ -1791,37 +1862,6 @@ def api_submit_assignment(id):
 
     user_id = session["user_id"]
 
-    # Verify ownership first.
-    with db_cursor() as c:
-        if IS_POSTGRES:
-            c.execute(
-                """
-                SELECT id
-                FROM assignments
-                WHERE id = %s
-                  AND user_id = %s
-                """,
-                (id, user_id)
-            )
-        else:
-            c.execute(
-                """
-                SELECT id
-                FROM assignments
-                WHERE id = ?
-                  AND user_id = ?
-                """,
-                (id, user_id)
-            )
-
-        existing = c.fetchone()
-
-    if not existing:
-        return jsonify({
-            "success": False,
-            "error": "Assignment not found."
-        }), 404
-
     with db_cursor() as c:
         if IS_POSTGRES:
             c.execute(
@@ -1837,6 +1877,7 @@ def api_submit_assignment(id):
                     user_id
                 )
             )
+
         else:
             c.execute(
                 """
@@ -1852,22 +1893,25 @@ def api_submit_assignment(id):
                 )
             )
 
-    # Match the website's badge behavior.
-    #
-    # Only award it when marking something submitted,
-    # NOT when un-submitting it.
-    if submitted:
-        try:
-            if not user_has_badge(
-                "submitted_assignment",
-                user_id
-            ):
+        updated_rows = c.rowcount
+
+        if updated_rows == 0:
+            return jsonify({
+                "success": False,
+                "error": "Assignment not found."
+            }), 404
+
+        # Only check/award the badge when submitting,
+        # not when un-submitting.
+        if submitted:
+            try:
                 award_badge_to_user(
                     "submitted_assignment",
-                    user_id
+                    user_id,
+                    c
                 )
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     return jsonify({
         "success": True,
@@ -1892,57 +1936,34 @@ def api_delete_assignment(id):
 
     user_id = session["user_id"]
 
-    # Verify ownership before deleting so we can return
-    # a useful 404 instead of always saying success.
     with db_cursor() as c:
         if IS_POSTGRES:
             c.execute(
                 """
-                SELECT id
-                FROM assignments
+                DELETE FROM assignments
                 WHERE id = %s
                   AND user_id = %s
                 """,
                 (id, user_id)
             )
+
         else:
             c.execute(
                 """
-                SELECT id
-                FROM assignments
+                DELETE FROM assignments
                 WHERE id = ?
                   AND user_id = ?
                 """,
                 (id, user_id)
             )
 
-        existing = c.fetchone()
+        deleted_rows = c.rowcount
 
-    if not existing:
+    if deleted_rows == 0:
         return jsonify({
             "success": False,
             "error": "Assignment not found."
         }), 404
-
-    with db_cursor() as c:
-        if IS_POSTGRES:
-            c.execute(
-                """
-                DELETE FROM assignments
-                WHERE id = %s
-                  AND user_id = %s
-                """,
-                (id, user_id)
-            )
-        else:
-            c.execute(
-                """
-                DELETE FROM assignments
-                WHERE id = ?
-                  AND user_id = ?
-                """,
-                (id, user_id)
-            )
 
     return jsonify({
         "success": True,
@@ -2145,15 +2166,25 @@ def update_account_settings():
         return redirect(url_for("login"))
 
     dark = request.form.get("dark_mode") in ("1", "on", "true", "True")
+
     with db_cursor() as c:
         if IS_POSTGRES:
-            c.execute("UPDATE users SET dark_mode = %s WHERE id = %s", (dark, session["user_id"]))
+            c.execute(
+                "UPDATE users SET dark_mode = %s WHERE id = %s",
+                (dark, session["user_id"])
+            )
         else:
-            c.execute("UPDATE users SET dark_mode = ? WHERE id = ?", (int(dark), session["user_id"]))
+            c.execute(
+                "UPDATE users SET dark_mode = ? WHERE id = ?",
+                (int(dark), session["user_id"])
+            )
+
+    # Keep the session cache synchronized.
+    session["dark_mode"] = dark
 
     flash("Account settings updated.", "info")
     return redirect(url_for("account"))
-
+    
 @app.route("/account")
 def account():
     if "user_id" not in session:
@@ -2244,120 +2275,192 @@ def grade_tracker():
         return redirect("/login")
 
     if not feature_enabled("grade_tracker", default=True):
-        if session.get("dev") or session.get("user_id") == -1 or session.get("is_admin") == 1:
+        if (
+            session.get("dev")
+            or session.get("user_id") == -1
+            or session.get("is_admin") == 1
+        ):
             pass
         else:
             return render_template("disabled.html"), 403
 
-    classes = []
+    user_id = session["user_id"]
+
     with db_cursor() as c:
+        # -------------------------------------------------
+        # 1. Load every class ONCE
+        # -------------------------------------------------
         if IS_POSTGRES:
             c.execute("""
                 SELECT id, class_name, link
                 FROM class_links
                 WHERE user_id = %s
                 ORDER BY class_name ASC
-            """, (session["user_id"],))
+            """, (user_id,))
         else:
             c.execute("""
                 SELECT id, class_name, link
                 FROM class_links
                 WHERE user_id = ?
                 ORDER BY class_name ASC
-            """, (session["user_id"],))
+            """, (user_id,))
+
         raw_classes = c.fetchall()
 
-        # small helper to coerce DB value into bytes for Fernet
-        def _to_bytes(val):
-            if val is None:
-                return None
-            if isinstance(val, (bytes, bytearray)):
-                return bytes(val)
+        # -------------------------------------------------
+        # 2. Load every assignment ONCE
+        # -------------------------------------------------
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT id, cl
+                FROM assignments
+                WHERE user_id = %s
+            """, (user_id,))
+        else:
+            c.execute("""
+                SELECT id, cl
+                FROM assignments
+                WHERE user_id = ?
+            """, (user_id,))
+
+        assignment_rows = c.fetchall()
+
+        # -------------------------------------------------
+        # 3. Load every grade ONCE
+        # -------------------------------------------------
+        if IS_POSTGRES:
+            c.execute("""
+                SELECT id, assignment_id, grade, out_of
+                FROM grades
+                WHERE user_id = %s
+                ORDER BY id ASC
+            """, (user_id,))
+        else:
+            c.execute("""
+                SELECT id, assignment_id, grade, out_of
+                FROM grades
+                WHERE user_id = ?
+                ORDER BY id ASC
+            """, (user_id,))
+
+        grade_rows = c.fetchall()
+
+    # =====================================================
+    # Everything below here happens IN MEMORY.
+    # No more SQL queries.
+    # =====================================================
+
+    assignments_by_class = {}
+    assignment_class_lookup = {}
+
+    for row in assignment_rows:
+        assignment_id = row_val(row, "id")
+        class_name = str(
+            row_val(row, "cl") or ""
+        ).strip().lower()
+
+        assignments_by_class.setdefault(
+            class_name,
+            []
+        ).append(assignment_id)
+
+        assignment_class_lookup[assignment_id] = class_name
+
+    # Keep the latest grade for each assignment.
+    #
+    # Because rows are ORDER BY id ASC, newer grade records
+    # overwrite older ones.
+    latest_grade_by_assignment = {}
+
+    for row in grade_rows:
+        assignment_id = row_val(
+            row,
+            "assignment_id"
+        )
+
+        latest_grade_by_assignment[
+            assignment_id
+        ] = row
+
+    classes = []
+
+    for cr in raw_classes:
+        class_id = row_val(cr, "id")
+        class_name = row_val(cr, "class_name")
+        link = row_val(cr, "link")
+
+        normalized_class_name = str(
+            class_name or ""
+        ).strip().lower()
+
+        assignment_ids = assignments_by_class.get(
+            normalized_class_name,
+            []
+        )
+
+        assignments_count = len(assignment_ids)
+
+        percentages = []
+        graded_count = 0
+
+        for assignment_id in assignment_ids:
+            grade_row = latest_grade_by_assignment.get(
+                assignment_id
+            )
+
+            if not grade_row:
+                continue
+
+            grade_value = decrypt_grade_safe(
+                row_val(grade_row, "grade")
+            )
+
+            out_of_value = decrypt_grade_safe(
+                row_val(grade_row, "out_of")
+            )
+
+            if (
+                grade_value is None
+                or out_of_value is None
+                or out_of_value == 0
+            ):
+                continue
+
             try:
-                return bytes(val)
-            except Exception:
-                return str(val).encode()
+                percentage = (
+                    float(grade_value)
+                    / float(out_of_value)
+                ) * 100.0
 
-        for cr in raw_classes:
-            class_id = row_val(cr, "id")
-            class_name = row_val(cr, "class_name")
-            link = row_val(cr, "link")
+                percentages.append(percentage)
+                graded_count += 1
 
-            # get assignment ids that belong to this class for this user
-            if IS_POSTGRES:
-                c.execute("""
-                    SELECT a.id
-                    FROM assignments a
-                    JOIN class_links cl
-                    ON LOWER(TRIM(a.cl)) = LOWER(TRIM(cl.class_name))
-                    WHERE a.user_id = %s
-                    AND cl.id = %s
-                """, (session["user_id"], class_id))
-            else:
-                c.execute("""
-                    SELECT a.id
-                    FROM assignments a
-                    JOIN class_links cl
-                    ON TRIM(a.cl) = TRIM(cl.class_name)
-                    WHERE a.user_id = ?
-                    AND cl.id = ?
-                """, (session["user_id"], class_id))
-            assignment_rows = c.fetchall()
-            assignment_ids = [row_val(a, "id") for a in assignment_rows]
-            print("CLASS:", class_name, "ASSIGNMENT IDS:", assignment_ids)
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
 
+        class_average = (
+            round(
+                sum(percentages)
+                / len(percentages),
+                2
+            )
+            if percentages
+            else None
+        )
 
-            assignments_count = len(assignment_ids)
-            graded_count = 0
-            percentages = []
+        classes.append({
+            "id": class_id,
+            "class_name": class_name,
+            "link": link,
+            "assignments_count": assignments_count,
+            "graded_count": graded_count,
+            "average": class_average
+        })
 
-            if assignment_ids:
-                if IS_POSTGRES:
-                    placeholders = ",".join(["%s"] * len(assignment_ids))
-                    sql = f"SELECT grade, out_of FROM grades WHERE user_id = %s AND assignment_id IN ({placeholders})"
-                    params = [session["user_id"]] + assignment_ids
-                    c.execute(sql, tuple(params))
-                else:
-                    placeholders = ",".join(["?"] * len(assignment_ids))
-                    sql = f"SELECT grade, out_of FROM grades WHERE user_id = ? AND assignment_id IN ({placeholders})"
-                    params = [session["user_id"]] + assignment_ids
-                    c.execute(sql, params)
-
-                grade_rows = c.fetchall()
-                print("GRADE ROWS:", grade_rows)
-                for gr in grade_rows:
-                    enc_grade = row_val(gr, "grade")
-                    enc_out = row_val(gr, "out_of")
-
-                    g_bytes = _to_bytes(enc_grade)
-                    o_bytes = _to_bytes(enc_out)
-
-                    if not g_bytes or not o_bytes:
-                        continue
-
-                    try:
-                        g_val = decrypt_grade(g_bytes)
-                        o_val = decrypt_grade(o_bytes)
-                        if o_val and o_val != 0:
-                            pct = (float(g_val) / float(o_val)) * 100.0
-                            percentages.append(pct)
-                            graded_count += 1
-                    except Exception:
-                        continue
-
-            class_average = round(sum(percentages) / len(percentages), 2) if percentages else None
-
-            classes.append({
-                "id": class_id,
-                "class_name": class_name,
-                "link": link,
-                "assignments_count": assignments_count,
-                "graded_count": graded_count,
-                "average": class_average
-            })
-
-    return render_template("grade_tracker.html", classes=classes)
-
+    return render_template(
+        "grade_tracker.html",
+        classes=classes
+    )
 @app.route("/dev-add-disabled-function", methods=["POST"])
 def dev_add_disabled_function():
     if not session.get("dev") and session.get("user_id") != -1:
